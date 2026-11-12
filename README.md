@@ -17,7 +17,28 @@ Requires PixInsight 1.9.4 or newer (V8 JavaScript engine).
 
 ## Install
 
-### 1. Get the files
+Pick **one** of the two ways below. Using both puts ObstructionCorrection in the Script menu
+twice.
+
+### A. From the update repository (easiest — no download)
+
+1. In PixInsight: **Resources → Updates → Manage Repositories**, click **Add**, and enter
+   ```
+   https://raw.githubusercontent.com/theak7033/pixinsight-scripts-mtf-recovery/main/repository/
+   ```
+   then **OK**.
+2. **Resources → Updates → Check for Updates**. *ObstructionCorrection* is listed; keep it
+   ticked and click **Apply**.
+3. Let PixInsight restart. The script is under **Script → Utilities → ObstructionCorrection**.
+
+New versions arrive the same way, through **Check for Updates**.
+
+The repository's manifest carries a placeholder signature, as many community repositories
+do; current PixInsight builds install it anyway. If yours refuses it, use way B.
+
+### B. From the files, via Feature Scripts
+
+#### 1. Get the files
 
 Clone the repository, or download it from GitHub (**Code → Download ZIP**) and unzip it:
 
@@ -29,7 +50,7 @@ On Windows, if you clone with git, keep the files' LF line endings: run
 `git config core.autocrlf false` in the clone, then `git checkout -- .` (the script itself
 runs either way; the tests need LF).
 
-### 2. Add it to PixInsight's Script menu (recommended)
+#### 2. Add it to the Script menu
 
 1. In PixInsight, open **Script → Feature Scripts…**.
 2. Click **Add**.
@@ -43,7 +64,7 @@ pointing at this folder, so after an update (`git pull`, or a new ZIP unzipped o
 one) the menu entry runs the new version; no need to add it again. To remove it, untick it
 in **Script → Feature Scripts…** and click **Done**.
 
-### Or: run it once without installing
+### Or: run it once without installing anything
 
 **Script → Execute Script File…**, then pick
 `src/scripts/ObstructionCorrection/ObstructionCorrection.js`.
@@ -98,3 +119,15 @@ tools/test.sh
 
 Runs the math self-test, a syntax check, and unit tests of the dialog and processing code
 against a stand-in for PixInsight (every function must be exercised), with Node.js if installed or the `jsc` shell that ships with macOS. See [AGENTS.md](AGENTS.md) for conventions.
+
+### Releasing a new version
+
+```bash
+tools/build-package.sh 0.2.0
+```
+
+Runs the tests, zips `src/scripts` into `repository/ObstructionCorrection-0.2.0.zip`, removes
+the older zip, and writes the new file name, sha1 and date into `repository/updates.xri`.
+Commit `repository/` and push to `main`; everyone who added the repository URL gets the
+update through **Check for Updates**. Always use a new version number: PixInsight only
+offers a package whose file name or release date changed.
