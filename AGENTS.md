@@ -35,7 +35,8 @@ Full design, numbers, milestones and open questions: [PLAN.md](PLAN.md). Follow 
 ```
 src/scripts/ObstructionCorrection/ObstructionCorrection.js   the single self-contained script
 tools/selftest.js        tests the portable math block + parse-checks the script
-tools/smoketest.js       runs the whole script against a fake PixInsight (catches JS slips only)
+tools/smoketest.js       unit + end-to-end tests of the PixInsight-side code against a fake PixInsight;
+                         fails if any named function or method is never entered
 tools/test.sh            runs selftest with Node, or macOS jsc when Node is absent
 tools/build-package.sh   zips src/scripts for a PixInsight update repository
 repository/              built package + updates.xri (added at release)
@@ -71,7 +72,9 @@ Conventions follow https://github.com/awitwicki/PI-Scripts; its CLAUDE.md explai
 
 ## Testing
 
-- `tools/test.sh` covers JS syntax, the math block and a fake-PixInsight smoke run. The
+- `tools/test.sh` covers JS syntax, the math block, and unit tests of everything else
+  against a fake PixInsight. Add a test for every new function: the coverage check fails
+  the run otherwise. The
   fake accepts any property or method name, so it cannot catch a wrong PixInsight API name.
 - `jsc`'s `quit()` ignores its exit code; the test files throw to signal failure. Keep that.
 - GUI, process calls and image I/O can only be tested **inside PixInsight**, by the owner.
