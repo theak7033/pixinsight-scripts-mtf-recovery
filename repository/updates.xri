@@ -30,13 +30,13 @@
    </description>
 
    <platform os="all" arch="noarch" version="1.9.4:2.0.0">
-      <package fileName="ObstructionCorrection-0.1.0.zip"
-               sha1="fa196fec38471c1f6fe1f1fa2711bfe65e387e49"
+      <package fileName="ObstructionCorrection-0.1.1.zip"
+               sha1="452a1d3f532013ddf887ddf091f644ea6a502589"
                type="script"
                releaseDate="20261112"
                installPrefix=""
                removeBeforeInstall="false">
-         <title>ObstructionCorrection 0.1.0</title>
+         <title>ObstructionCorrection 0.1.1</title>
          <description>
             <p>Installs Script &gt; Utilities &gt; ObstructionCorrection. Pick your
             telescope from the list (12 obstructed astrographs and reflectors,

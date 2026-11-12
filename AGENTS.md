@@ -29,8 +29,17 @@ Full design, numbers, milestones and open questions: [PLAN.md](PLAN.md). Follow 
   - `Settings` stores strings **8-bit** (an em dash came back as U+0014): keep stored strings ASCII.
   - Setting `NumericControl.setValue` / `ComboBox.currentItem` from code fires no events.
   - `image.median()`, view keywords, `ViewList`, Cancel path work.
-- Still not run inside PixInsight: in-place mode with a mask, mono images, plate-solved images,
-  *True equivalent* mode, install via Feature Scripts, a visual check of the result.
+- 2026-11-12, v0.1.1: same stack **plate-solved** with ImageSolver. Verified there:
+  - The solution matrix is the view property `AstrometricSolution:LinearTransformationMatrix`
+    (**no** `PCL:` prefix; only `PCL:AstrometricSolution:Generation:*` / `Grid:*` carry it), a
+    2×2 `Matrix` in degrees per pixel read with `at( r, c )`. √|det|·3600 = 1.938″/px, equal to
+    the solver's own figure. ImageSolver also rewrites `FOCALLEN` (400.118 mm).
+  - PixelMath's new image has **no keywords and no properties**. `win.keywords = src.keywords`
+    and `win.copyAstrometricSolution( src )` carry them over (`copyMetadata`).
+  - A typed focal length does not override a solution scale; the original image is untouched.
+  - Install via Feature Scripts and discovery through the update repository URL both work.
+- Still not run inside PixInsight: in-place mode with a mask, mono images, *True equivalent*
+  mode, installing the package through Check for Updates (restart), a visual check of the result.
 - Not built yet (PLAN.md milestones 6–7): noise-aware weighting, MTF plot, in-PixInsight
   synthetic test script, update-repository manifest.
 

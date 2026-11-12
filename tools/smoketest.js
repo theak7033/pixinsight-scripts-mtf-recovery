@@ -56,7 +56,7 @@ var src = readText( SCRIPT ).split( "\n" ).map( function( line ) {
 var EXPORTS = [
    "errText", "trySet", "uniqueViewId", "closeWindow", "readSetting", "writeSetting",
    "keywordDict", "mat22", "detectImageScale", "createKernelWindow", "pixelMathToNewGray",
-   "convolveWithKernel", "gaussianBlur", "applyCorrection", "main", "log",
+   "convolveWithKernel", "gaussianBlur", "copyMetadata", "applyCorrection", "main", "log",
    "ObstructionCorrectionDialog", "buildKernel", "obstructionGain", "kernelResponse",
    "imageScaleArcsec", "opticsLabel", "opticsKey", "obstructedOptics", "OPTICS", "BANDS",
    "MODE_RESTORE_ONLY", "MODE_TRUE_EQUIVALENT"
@@ -99,16 +99,26 @@ function runScript( opts ) {
                          setSample: function( v, x, y, c ) { samples.push( [ v, x, y, c ] ); } } ),
          beginProcess: function() { view.began = true; },
          endProcess: function() { view.ended = true; },
-         hasProperty: function() {
+         // Like PixInsight 1.9.4 + ImageSolver: the solution matrix is the property
+         // "AstrometricSolution:LinearTransformationMatrix" (no "PCL:" prefix), a 2x2
+         // Matrix read with at( row, col ). solved: "legacy" uses the prefixed name.
+         hasProperty: function( name ) {
             if ( opts.solved === "throw" ) throw "property store unavailable";
-            return !!opts.solved;
+            if ( !opts.solved ) return false;
+            return name === ( opts.solved === "legacy" ? "PCL:" : "" ) + "AstrometricSolution:LinearTransformationMatrix";
          },
          propertyValue: function() {
-            return opts.solved === "degenerate" ? [ 0, 0, 0, 0 ] : [ -5e-4, 0, 0, 5e-4 ];   // 1.8 "/px
+            var m = opts.solved === "degenerate" ? [ 0, 0, 0, 0 ]
+                  : opts.solved === "real" ? [ -0.00033390860916959097, 0.00042235229469336950,   // owner's RASA 8 stack,
+                                               -0.00042225020655379310, -0.00033410189680862080 ] //   solver says 1.938 "/px
+                  : [ -5e-4, 0, 0, 5e-4 ];                                                       // 1.8 "/px
+            return { rows: 2, cols: 2, length: 2, at: function( r, c ) { return m[ 2*r + c ]; } };
          }
       };
       var win = { isNull: false, mainView: view, keywords: opts.keywords || [],
                   maskEnabled: !!opts.masked,
+                  hasAstrometricSolution: !!opts.solved,
+                  copyAstrometricSolution: function( src ) { win.solutionFrom = src.mainView.id; },
                   show: function() { R.shown.push( id ); },
                   forceClose: function() { delete R.views[id]; } };
       if ( extra ) for ( var k in extra ) win[k] = extra[k];
@@ -440,6 +450,14 @@ out( "== detectImageScale ==" );
    eq( "source is the astrometric solution", r.source, "astrometric solution" );
    eq( "FITS optics still reported", [ r.focalMm, r.pixelUm ], [ 406, 3.76 ] );
 
+   R = runScript( { cancel: true, solved: "real" } );
+   r = R.x.detectImageScale( R.target.mainView );
+   near( "real ImageSolver matrix (owner's RASA 8 stack) = 1.938\"/px", r.scale, 1.9383, 1e-4 );
+   eq( "... read from the solution", r.source, "astrometric solution" );
+
+   R = runScript( { cancel: true, solved: "legacy" } );
+   near( "the PCL:-prefixed property name still works", R.x.detectImageScale( R.target.mainView ).scale, 1.8, 1e-9 );
+
    R = runScript( { cancel: true, solved: "degenerate",
       keywords: [ { name: "FOCALLEN", value: "406" }, { name: "XPIXSZ", value: "3.76" } ] } );
    r = R.x.detectImageScale( R.target.mainView );
@@ -492,6 +510,19 @@ out( "== processing steps ==" );
 
    var H = runScript( { cancel: true, hideWindow: function() { return true; } } );
    throws( "pixelMathToNewGray: image not created", function() { H.x.pixelMathToNewGray( H.target.mainView, "$T", "g" ); }, /did not create the image g/ );
+
+   // copyMetadata
+   var S = runScript( { cancel: true, solved: true, keywords: [ { name: "FOCALLEN", value: "400" } ] } );
+   var to = S.fakeWindow( "copy_target" );
+   eq( "copyMetadata: header and solution", S.x.copyMetadata( S.target, to ), [ "FITS keywords", "astrometric solution" ] );
+   eq( "... keywords copied", to.keywords, [ { name: "FOCALLEN", value: "400" } ] );
+   eq( "... solution copied from the source", to.solutionFrom, "target" );
+   var U = runScript( { cancel: true } );
+   eq( "copyMetadata: unsolved source -> keywords only", U.x.copyMetadata( U.target, U.fakeWindow( "t2" ) ), [ "FITS keywords" ] );
+   eq( "copyMetadata: missing or null window -> nothing", [ U.x.copyMetadata( U.target, null ), U.x.copyMetadata( U.target, { isNull: true } ), U.x.copyMetadata( null, U.target ) ], [ [], [], [] ] );
+   var locked = { isNull: false, copyAstrometricSolution: function() { throw "read-only"; } };
+   Object.defineProperty( locked, "keywords", { set: function() { throw "read-only"; } } );
+   eq( "copyMetadata: native failures are swallowed", S.x.copyMetadata( S.target, locked ), [] );
 } )();
 
 out( "== applyCorrection ==" );
@@ -508,6 +539,14 @@ out( "== applyCorrection ==" );
    eq( "second run gets a unique id", R.x.applyCorrection( params( R ) ), "target_oc1" );
    eq( "in place returns the target id", R.x.applyCorrection( params( R, { inPlace: true } ) ), "target" );
    eq( "no temporary windows left", R.temps(), [] );
+
+   R = runScript( { cancel: true, solved: true, keywords: [ { name: "XPIXSZ", value: "3.76" } ] } );
+   R.x.applyCorrection( params( R ) );
+   eq( "new image keeps the FITS header", R.views[ "target_oc" ].keywords, [ { name: "XPIXSZ", value: "3.76" } ] );
+   eq( "new image keeps the plate solution", R.views[ "target_oc" ].solutionFrom, "target" );
+   check( "metadata copy is logged", R.has( /^Metadata\s+: copied FITS keywords and astrometric solution/ ) );
+   R.x.applyCorrection( params( R, { inPlace: true } ) );
+   eq( "in place: nothing to copy", R.target.solutionFrom, undefined );
 
    R = runScript( { cancel: true } );
    R.x.applyCorrection( params( R, { protect: true, satThreshold: 0.9 } ) );

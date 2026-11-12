@@ -1,6 +1,6 @@
 #engine v8
 // ============================================================
-// ObstructionCorrection.js — PixInsight Script  v0.1
+// ObstructionCorrection.js — PixInsight Script  v0.1.1
 //
 // Restores the contrast a telescope's central obstruction removes at
 // medium spatial frequencies, by filtering a LINEAR image with
@@ -325,7 +325,7 @@ function kernelNoiseGain( kernel ) {
 // ============================================================
 //  CONFIGURATION — internals; user-facing parameters live in the dialog
 // ============================================================
-const VERSION = "0.1";
+const VERSION = "0.1.1";
 const SETTINGS_KEY = "ObstructionCorrection/";
 
 const DEFAULT_APERTURE_MM     = 200;
@@ -411,6 +411,11 @@ function mat22( L ) {
    return null;
 }
 
+const SOLUTION_MATRIX_PROPERTIES = [
+   "AstrometricSolution:LinearTransformationMatrix",
+   "PCL:AstrometricSolution:LinearTransformationMatrix"
+];
+
 function detectImageScale( view ) {
    let r = { scale: null, source: "not found — enter focal length and pixel size", focalMm: null, pixelUm: null };
    if ( !view || view.isNull )
@@ -423,8 +428,10 @@ function detectImageScale( view ) {
    if ( isFinite( pixel ) && pixel > 0 ) r.pixelUm = pixel;
 
    try {
-      let P = "PCL:AstrometricSolution:LinearTransformationMatrix";
-      if ( view.hasProperty && view.hasProperty( P ) ) {
+      // PixInsight 1.9.4 (ImageSolver) stores it WITHOUT the "PCL:" prefix, as a
+      // 2x2 Matrix in degrees per pixel; the prefixed name is kept as a fallback.
+      let P = SOLUTION_MATRIX_PROPERTIES.find( function( n ) { return view.hasProperty && view.hasProperty( n ); } );
+      if ( P ) {
          let L = mat22( view.propertyValue( P ) );      // degrees per pixel
          if ( L ) {
             let s = Math.sqrt( Math.abs( L[0]*L[3] - L[1]*L[2] ) ) * 3600;
@@ -833,6 +840,23 @@ function gaussianBlur( view, sigma ) {
       throw new Error( "Convolution (Gaussian) failed on " + view.id );
 }
 
+// PixelMath's new image starts with no FITS header and no properties, so a
+// plate solution would be lost. Carry over both (verified in PixInsight
+// 1.9.4: keywords assignment + copyAstrometricSolution). Returns what was copied.
+function copyMetadata( fromWin, toWin ) {
+   let copied = [];
+   if ( !fromWin || !toWin || toWin.isNull )
+      return copied;
+   try { toWin.keywords = fromWin.keywords; copied.push( "FITS keywords" ); } catch ( e ) { /* not essential */ }
+   try {
+      if ( fromWin.hasAstrometricSolution ) {
+         toWin.copyAstrometricSolution( fromWin );
+         copied.push( "astrometric solution" );
+      }
+   } catch ( e ) { /* not essential */ }
+   return copied;
+}
+
 // ============================================================
 //  The correction itself
 // ============================================================
@@ -928,6 +952,9 @@ function applyCorrection( p ) {
          P.newImageSampleFormat = PixelMath.f32;
          if ( !P.executeOn( view ) )
             throw new Error( "PixelMath failed while writing the result" );
+         let copied = copyMetadata( win, ImageWindow.windowById( resultId ) );
+         if ( copied.length )
+            log( "Metadata         : copied " + copied.join( " and " ) );
       }
       return resultId;
    } finally {
