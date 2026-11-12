@@ -46,8 +46,8 @@ tools/selftest.js        tests the portable math block + parse-checks the script
 tools/smoketest.js       unit + end-to-end tests of the PixInsight-side code against a fake PixInsight;
                          fails if any named function or method is never entered
 tools/test.sh            runs selftest with Node, or macOS jsc when Node is absent
-tools/build-package.sh   zips src/scripts for a PixInsight update repository
-repository/              built package + updates.xri (added at release)
+tools/build-package.sh   zips src/scripts into repository/ and updates repository/updates.xri
+repository/              update repository served from main: package zip + updates.xri
 docs/images/             README screenshots
 ```
 
@@ -55,7 +55,7 @@ docs/images/             README screenshots
 
 ```bash
 tools/test.sh                    # after every change
-tools/build-package.sh 0.1.0     # release time only
+tools/build-package.sh 0.2.0     # release time only: then commit repository/ and push to main
 ```
 
 ## Hard rules for the script (PixInsight 1.9.4+, V8 engine)

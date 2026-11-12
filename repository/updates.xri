@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+   ============================================================
+   PixInsight update-repository manifest — ObstructionCorrection
+   ============================================================
+   PixInsight reads this file to discover and install the script package.
+
+   HOW USERS ADD THE REPOSITORY (in PixInsight):
+     Resources > Updates > Manage Repositories > Add
+     URL: https://raw.githubusercontent.com/theak7033/pixinsight-scripts-mtf-recovery/main/repository/
+     (PixInsight then fetches  <URL>/updates.xri  — i.e. this file.)
+
+   TO RELEASE A NEW VERSION:
+     tools/build-package.sh <version>
+     That rebuilds the zip and writes fileName, sha1, releaseDate and the
+     title below. Then commit repository/ and push to main.
+
+   The <signature> block is a PLACEHOLDER, as in the reference repository
+   (awitwicki/PI-Scripts). PixInsight's docs say a repository should be
+   signed with a registered developer certificate; current builds install
+   script packages from it anyway. If a build refuses the unsigned manifest,
+   install through Script > Feature Scripts instead (see README).
+   ============================================================
+-->
+<xri version="1.0">
+   <description>
+      <p>ObstructionCorrection — restores the medium-scale contrast that a
+      telescope's central obstruction (secondary mirror) removes, by filtering
+      a linear image with the clear-aperture / obstructed-aperture MTF ratio.</p>
+   </description>
+
+   <platform os="all" arch="noarch" version="1.9.4:2.0.0">
+      <package fileName="ObstructionCorrection-0.1.0.zip"
+               sha1="fa196fec38471c1f6fe1f1fa2711bfe65e387e49"
+               type="script"
+               releaseDate="20261112"
+               installPrefix=""
+               removeBeforeInstall="false">
+         <title>ObstructionCorrection 0.1.0</title>
+         <description>
+            <p>Installs Script &gt; Utilities &gt; ObstructionCorrection. Pick your
+            telescope from the list (12 obstructed astrographs and reflectors,
+            or Custom); the image scale is read from the plate solution or the
+            FITS FOCALLEN / XPIXSZ keywords. Works on linear RGB or mono data,
+            per-channel bands, saturated-star protection, new image or in place
+            with undo. Requires PixInsight 1.9.4 or newer.</p>
+         </description>
+      </package>
+   </platform>
+
+   <signature>
+      PLACEHOLDER_SIGNATURE__sign_with_your_PixInsight_developer_certificate
+   </signature>
+</xri>
