@@ -2,152 +2,85 @@
 
 Read this first. It is the brief for any agent (Claude, Codex, etc.) working in this repo.
 
+## What this is
+
+A PixInsight script, **ObstructionCorrection**, that restores the contrast a telescope's
+**central obstruction** (secondary mirror) removes at medium spatial frequencies. It filters
+a linear image with `H = MTF_clear / MTF_obstructed`.
+
+"MTF" in the repo name is the optical **modulation** transfer function. It is **not**
+PixInsight's midtones transfer function; an earlier version of this file got that wrong.
+
+Full design, numbers, milestones and open questions: [PLAN.md](PLAN.md). Follow it.
+
 ## Status
 
-- Repo created 2026-11-12. No code yet.
-- The original design discussion happened in claude.ai chats that were **not** available
-  when this file was written. The spec below is a reconstruction from the project name and
-  standard PixInsight math. Anything marked **[ASSUMPTION]** must be confirmed with the
-  owner before it is built on; update this file when it is.
+- 2026-11-12: v0.1 written — full portable math (MTFs, bands, kernel builder, FFT), dialog
+  with the telescope drop-down, processing pipeline (PixelMath channel extraction →
+  `Convolution` in Image mode → PixelMath write-back, saturated-star protection).
+- **Never run inside PixInsight yet.** `tools/test.sh` passes, but that is math plus a
+  fake-PixInsight smoke run. The first real run by the owner is the next step; expect
+  API-name fixes. Unverified calls: negative-valued kernel view accepted by `Convolution`,
+  PixelMath `createNewImage` properties and enum names, `Settings` round trip,
+  `ComboBox` / `NumericControl` event names, `image.median()`.
+- Not built yet (PLAN.md milestones 6–7): noise-aware weighting, MTF plot, in-PixInsight
+  synthetic test script, update-repository manifest.
 
-## Goal
+- The `OPTICS` table (telescope drop-down) holds the 12 obstructed optics from the owner's
+  spreadsheet. Never add entries from memory or the web without the owner's say-so; only
+  records with an obstruction are shown in the list.
 
-A PixInsight script (PJSR, JavaScript) that **recovers linear data from an image that was
-non-linearly stretched with a Midtones Transfer Function (MTF)**, i.e. undoes a
-HistogramTransformation / ScreenTransferFunction stretch so the image can go back into
-linear-stage processing (deconvolution, color calibration, noise reduction, etc.).
-
-Typical use cases [ASSUMPTION]:
-1. The user applied an STF permanently (STF → HistogramTransformation) too early and wants
-   the linear image back.
-2. The user has only a stretched image (e.g. a delivered TIFF / JPEG-derived XISF) plus the
-   stretch parameters, or needs them estimated.
-
-## The math
-
-PixInsight's midtones transfer function with midtones balance `m` (0 < m < 1):
+## Layout
 
 ```
-MTF(m, x) = ((m - 1) * x) / ((2m - 1) * x - m)      MTF(m,0)=0, MTF(m,m)=0.5, MTF(m,1)=1
+src/scripts/ObstructionCorrection/ObstructionCorrection.js   the single self-contained script
+tools/selftest.js        tests the portable math block + parse-checks the script
+tools/smoketest.js       runs the whole script against a fake PixInsight (catches JS slips only)
+tools/test.sh            runs selftest with Node, or macOS jsc when Node is absent
+tools/build-package.sh   zips src/scripts for a PixInsight update repository
+repository/              built package + updates.xri (added at release)
+docs/images/             README screenshots
 ```
 
-A HistogramTransformation with shadows clip `c0`, midtones `m`, highlights clip `c1`
-(expansion range r0=0, r1=1) maps:
+## Commands
 
-```
-x' = MTF(m, clamp((x - c0) / (c1 - c0), 0, 1))
-```
-
-Key identity: **the inverse of MTF(m, ·) is MTF(1 - m, ·)**. So the recovery is
-
-```
-x = c0 + (c1 - c0) * MTF(1 - m, x')
+```bash
+tools/test.sh                    # after every change
+tools/build-package.sh 0.1.0     # release time only
 ```
 
-In PixelMath this is one expression per channel (PixelMath has a built-in `mtf(m, x)`):
+## Hard rules for the script (PixInsight 1.9.4+, V8 engine)
 
-```
-c0 + (c1 - c0) * mtf(1 - m, $T)
-```
+Conventions follow https://github.com/awitwicki/PI-Scripts; its CLAUDE.md explains the why.
 
-Limits to document in the UI and README:
-- Pixels clipped to 0 (below c0) or 1 (above c1) are **not recoverable**: they come back as
-  exactly c0 / c1.
-- 8/16-bit sources lose precision in the shadows after inversion (quantization is
-  amplified). Work in 32-bit float; warn when the source is integer.
-- Any further non-linear step (curves, LHE, HDRMT, noise reduction on stretched data)
-  breaks exact inversion; the result is then only approximately linear.
-
-## Where the stretch parameters come from
-
-Support these sources, in priority order [ASSUMPTION — confirm scope]:
-
-1. **Manual entry**: c0, m, c1 per channel (R/G/B or linked/L).
-2. **From the image's processing history**: read the HistogramTransformation instance
-   applied to the view (view history / process icon / ProcessContainer) and take its
-   parameters.
-3. **Reproduce PixInsight's AutoSTF** on a *reference linear image* (same data, before
-   stretch) to get the exact params the default STF would have used:
-   - `MADN = 1.4826 * MAD`
-   - `c0 = clamp(median + shadowsClipping * MADN, 0, 1)` with shadowsClipping = -2.8
-   - `m = MTF(targetBackground, median - c0)` with targetBackground = 0.25
-   - `c1 = 1`
-   - Linked (one set for all channels) or unlinked (per channel) — offer both.
-4. **Estimate only from the stretched image** (no reference): impossible to do exactly;
-   if implemented, label it clearly as an approximation. Not in v1 unless the owner asks.
-
-## Script requirements
-
-- Language: PixInsight JavaScript Runtime (PJSR). Single entry file
-  `src/MTFRecovery.js`, helpers in `src/lib/*.jsh` via `#include`.
-- Header directives:
-  ```
-  #feature-id    Utilities > MTFRecovery
-  #feature-info  Recovers linear data from an MTF/HistogramTransformation-stretched image.
-  ```
-  plus `#include <pjsr/...>` for the constants used (StdButton, StdIcon, Sizer helpers,
-  UndoFlag, etc.).
-- Dialog (`Dialog` subclass):
-  - Target view selector (`ViewList`).
-  - Parameter source: Manual / From history / AutoSTF on reference view.
-  - Per-channel c0 / m / c1 (`NumericControl`), with a "Linked channels" checkbox.
-  - Option: create a new image vs. modify the target in place (default: new image, named
-    `<id>_linear`).
-  - OK / Cancel; restore last-used parameters via `Settings`.
-- Processing: build a `PixelMath` instance with per-channel expressions
-  (`expression`, `expression1`, `expression2`, `useSingleExpression = false` when
-  unlinked), `rescale = false`, `truncate = true`, output 32-bit float. Run it with
-  `executeOn(view)`; wrap in `view.beginProcess(UndoFlag_NoSwapFile)` / `endProcess()` when
-  modifying in place, so it is undoable.
-- Validate input: 0 < m < 1, 0 ≤ c0 < c1 ≤ 1; refuse otherwise with a clear message.
-- Log the used parameters to the Process Console (`console.writeln`) so the run is
-  reproducible.
-- Support grayscale and RGB. Mono images use channel 0 only.
-
-## Repo layout (target)
-
-```
-src/MTFRecovery.js        entry point (dialog + run)
-src/lib/MTFMath.jsh       mtf(), inverse, AutoSTF param computation (pure functions)
-src/lib/MTFDialog.jsh     UI
-tests/                    PJSR test script(s) — see Testing
-README.md                 user docs: install, usage, limitations
-AGENTS.md                 this file
-CLAUDE.md                 points here
-```
+- `#engine v8` is the literal first line. `#feature-id` is `Id : Category > Label`.
+  `#feature-info` is one line, no `\` continuation.
+- Call `CoreApplication.ensureMinimumVersion( 1, 9, 4 )` right after the directives.
+- One self-contained file: no `#include` of project files. PixInsight's own
+  `<pjsr/*.jsh>` headers are required for every constant family used (`TextAlign_*`,
+  `UndoFlag_*`, `StdIcon_*`, `DataType_*`, ...); a missing one only fails when that line runs.
+- Dialogs: `var D = class extends Dialog { constructor() { super(); ... } }`. The old
+  `this.__base__ = Dialog` idiom throws under V8.
+- Top-level `try/catch` logs `e && e.message ? e.message : String( e )`; native errors are
+  often plain strings.
+- `View.viewById( id )` returns `null` when missing; `ImageWindow.windowById( id )` returns
+  an object with `.isNull`.
+- All engine-free math lives between the `BEGIN/END portable obstruction math` markers and
+  uses no PixInsight globals. `tools/selftest.js` extracts exactly that block, so add a test
+  there for every function added to it, and export the new name in the extraction list.
 
 ## Testing
 
-There is no Node/CI runtime for PJSR; tests run **inside PixInsight**.
-- `tests/RoundTripTest.js`: create a synthetic linear image (gradient + noise), stretch it
-  with a known HistogramTransformation (c0, m, c1), run the recovery, and assert
-  max |original − recovered| < 1e-5 for unclipped pixels. Cover linked and unlinked RGB,
-  m near 0 and near 1, c0 > 0.
-- Keep the math in `MTFMath.jsh` free of PixInsight objects so it can also be checked
-  quickly with plain `node` (load the file as text and eval) — optional, nice to have.
-- When you change code, say which tests you ran and where (PixInsight version), or say
-  explicitly that they could not be run.
-
-## Install (for README)
-
-PixInsight → Script → Feature Scripts… → Add → select the `src` folder → Done. The script
-appears under Script > Utilities > MTFRecovery. Or run directly via
-Script > Run Script File… → `src/MTFRecovery.js`.
+- `tools/test.sh` covers JS syntax, the math block and a fake-PixInsight smoke run. The
+  fake accepts any property or method name, so it cannot catch a wrong PixInsight API name.
+- `jsc`'s `quit()` ignores its exit code; the test files throw to signal failure. Keep that.
+- GUI, process calls and image I/O can only be tested **inside PixInsight**, by the owner.
+  Never report those as working from the self-test alone; say what was and was not run.
+- The machine this was scaffolded on has no PixInsight and no Node (jsc is used).
 
 ## Conventions
 
-- 2-space indent, `var`/`function` style compatible with PJSR's engine; avoid ES features
-  the PixInsight runtime does not support (check the PixInsight version in use).
-- Never commit image data (`*.xisf`, `*.fits`, `*.tif`) — use synthetic test images.
-- Commits: small, imperative messages. The GitHub token lives outside the repo; never
-  write it into git config, scripts or docs.
-
-## Open questions for the owner
-
-1. Exact scope from the original chats: is the main case "undo my STF/HT stretch" or
-   something else (e.g. recovering after GHS / arcsinh, or matching two stretches)?
-2. Which parameter sources are required in v1 (manual / history / AutoSTF reference /
-   estimate)?
-3. Target PixInsight version.
-4. In-place vs. new image default.
-5. Anything else decided in the chats (names, UI layout, extra features) — add it here.
+- 3-space indent and spaced parentheses, as in the reference repo.
+- Never commit image data (`*.xisf`, `*.fits`, `*.tif`); use synthetic test images.
+- The GitHub token lives outside the repo; never write it into git config, scripts or docs.
+- Commit or push only when the owner asks.
