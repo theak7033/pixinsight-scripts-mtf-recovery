@@ -56,14 +56,31 @@ Full design, numbers, milestones and open questions: [PLAN.md](PLAN.md). Follow 
   changes with it; Max boost is shown only for diffraction removal. Log names via `modeName()`.
   Real RedCat 91 / ASI294MM R stack (1.066"/px, stars 4.43"): max boost 1.5 -> FWHM 4.12",
   MAD x1.31; max boost 3 -> FWHM 4.00", MAD x2.08 (seeing-limited: diffraction ~1.5").
+- 2026-11-12, telemetry (owner's choice: Google Form -> Sheets, **on by default**, checkbox to
+  switch off, **no console output**). `TELEMETRY = { url, fields, timeoutS }`: one Short-answer
+  form question per parameter (`fields`: record key -> `entry.<id>`), so the sheet has one column
+  per parameter; values are readable (`yes`/`no`, `RGB`/`mono`). Empty url = inactive (checkbox
+  hidden, nothing sent). Posted form-encoded after processing; `event` "run" / "error"; never
+  image data, file names, paths (`scrubText`), keywords, coordinates. Form "ObstructionCorrection
+  usage" + sheet "ObstructionCorrection usage (responses)" (sheet locale United States so
+  decimals stay numbers). Verified end to end from PixInsight 1.9.6: one row, every value in its
+  column. Maintainer notes and how to add a column: [docs/telemetry-setup.md](docs/telemetry-setup.md).
+  `NetworkTransfer` facts (1.9.6): `setURL`, `setConnectionTimeout`, `setCustomHTTPHeaders`,
+  `post`, `responseCode`, `onDownloadDataAvailable`; UTF-8 bodies arrive intact; an unreachable
+  server returns `false` after the timeout, it does not throw. The smoke test replaces the url,
+  so tests never post to the real form.
 - Still not run inside PixInsight: in-place mode with a mask, mono images, *True equivalent*
   mode, installing the package through Check for Updates (restart), a visual check of the result.
 - Not built yet (PLAN.md milestones 6–7): noise-aware weighting, MTF plot, in-PixInsight
   synthetic test script. The update repository (`repository/`, served from `main`) exists.
 
-- The `OPTICS` table (telescope drop-down) holds the 12 obstructed optics from the owner's
-  spreadsheet. Never add entries from memory or the web without the owner's say-so; only
-  records with an obstruction are shown in the list.
+- The `OPTICS` table (telescope drop-down) holds 21 obstructed optics: the owner's spreadsheet
+  rows plus, at the owner's request (2026-11-12), the full Sky-Watcher Explorer PDS and Quattro
+  lineups, the Celestron RASA 36 and the current Takahashi Epsilons (130D, 160ED, 180ED), from
+  manufacturer specs (secondary minor axis / central obstruction, `obstructionMm`). Quattro
+  150P, 250P and Epsilon 130 were corrected from the sheet to the manufacturer figures; the
+  discontinued Epsilons (200/210/250/350) are left out for lack of reliable specs. Never add entries from memory, or from the web without the owner's
+  say-so; every record needs a source in the table's comment.
 
 ## Layout
 
@@ -89,6 +106,9 @@ tools/build-package.sh 0.2.0     # release time only: then commit repository/ an
 
 Conventions follow https://github.com/awitwicki/PI-Scripts; its CLAUDE.md explains the why.
 
+- **Never write `//` inside a regex literal** (e.g. `/^https?:\/\//`): PixInsight's preprocessor
+  strips from `//` to the end of the line even there, giving "Invalid regular expression".
+  String literals are safe. `tools/selftest.js` checks for `\//`.
 - `#engine v8` is the literal first line. `#feature-id` is `Id : Category > Label`.
   `#feature-info` is one line, no `\` continuation.
 - Call `CoreApplication.ensureMinimumVersion( 1, 9, 4 )` right after the directives.

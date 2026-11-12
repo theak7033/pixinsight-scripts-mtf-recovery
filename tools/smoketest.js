@@ -60,16 +60,19 @@ var EXPORTS = [
    "ObstructionCorrectionDialog", "buildKernel", "obstructionGain", "kernelResponse",
    "imageScaleArcsec", "opticsLabel", "opticsKey", "obstructedOptics", "OPTICS", "BANDS",
    "MODE_RESTORE_ONLY", "MODE_TRUE_EQUIVALENT", "MODE_IDEAL_APERTURE", "DEFAULT_MAX_BOOST",
-   "OPTICS_OBSTRUCTED", "OPTICS_REFRACTOR", "MODE_ITEMS", "modeName", "modeDescription"
+   "OPTICS_OBSTRUCTED", "OPTICS_REFRACTOR", "MODE_ITEMS", "modeName", "modeDescription",
+   "VERSION", "TELEMETRY", "telemetryConfigured", "installId", "scrubText", "round", "telemetryRecord",
+   "sendTelemetry", "reportUsage", "runState", "telemetryBody", "yesNo"
 ];
 
 // ---- the fake PixInsight ---------------------------------------------------
 // opts: color, median, solved, masked, keywords, store, cancel, tweak( dialog ),
 //       failProcess( kind, process, view ) -> false | throws,
-//       hideWindow( id ) -> true, settingsThrow, noActiveWindow
+//       hideWindow( id ) -> true, settingsThrow, noActiveWindow,
+//       telemetry (configure a test form), netFail, netThrow, netCode
 function runScript( opts ) {
    var R = { lines: [], calls: [], views: {}, store: opts.store || {}, threw: null,
-             dialogs: [], shown: [], procs: [] };
+             dialogs: [], shown: [], procs: [], posts: [] };
 
    // Swallows any property write and answers any unknown call.
    function loose( target ) {
@@ -182,9 +185,28 @@ function runScript( opts ) {
    ImageWindow.activeWindow = opts.noActiveWindow ? { isNull: true } : R.target;
    ImageWindow.windowById = function( id ) { return R.views[id] || { isNull: true }; };
 
+   // Like PixInsight 1.9.6: post() returns false on a dead network, it does not throw.
+   var NetworkTransfer = function() {
+      var t = this;
+      t.responseCode = 0;
+      t.setURL = function( u ) { t.url = u; };
+      t.setConnectionTimeout = function( sec ) { t.timeout = sec; };
+      t.setCustomHTTPHeaders = function( h ) { t.headers = h; };
+      t.post = function( body ) {
+         if ( opts.netThrow ) throw "network stack unavailable";
+         R.posts.push( { url: t.url, body: body, headers: t.headers, timeout: t.timeout,
+                         discardsReply: typeof t.onDownloadDataAvailable === "function" && t.onDownloadDataAvailable( "x" ) === true } );
+         if ( opts.netFail ) return false;
+         t.responseCode = opts.netCode || 200;
+         return true;
+      };
+   };
+
    var env = {
       __cov: cov,
-      CoreApplication: { ensureMinimumVersion: function( a, b, c ) { R.minVersion = [ a, b, c ]; } },
+      NetworkTransfer: NetworkTransfer,
+      CoreApplication: { ensureMinimumVersion: function( a, b, c ) { R.minVersion = [ a, b, c ]; },
+                         versionMajor: 1, versionMinor: 9, versionRelease: 6, versionRevision: 0, platform: "Windows" },
       Console: { show: function() {}, flush: function() {},
                  writeln: function( s ) { R.lines.push( String( s ) ); } },
       Settings: { lastReadOK: false,
@@ -212,7 +234,11 @@ function runScript( opts ) {
    };
    R.env = env;
    var names = Object.keys( env );
-   var body = src + "\nreturn { " + EXPORTS.map( function( n ) { return n + ": " + n; } ).join( ", " ) + " };";
+   // Whatever form the shipped script points at, tests use either none or a fake
+   // url (with the shipped field map), so they never post to the real form.
+   var code = src
+      .replace( /^( {3}url: {3})"[^"]*",/m, opts.telemetry ? '$1"https://forms.example/formResponse",' : '$1"",' );
+   var body = code + "\nreturn { " + EXPORTS.map( function( n ) { return n + ": " + n; } ).join( ", " ) + " };";
    try {
       R.x = Function.apply( null, names.concat( [ body ] ) )
                     .apply( null, names.map( function( n ) { return env[n]; } ) );
@@ -834,6 +860,137 @@ out( "== dialog settings ==" );
        [ d3.telescopeCombo.currentItem, d3.bandCombo.currentItem, d3.modeCombo.currentItem ], [ 0, 0, 0 ] );
    R.store[ KEY + "band" ] = -1;
    eq( "negative band index falls back", new X.ObstructionCorrectionDialog().bandCombo.currentItem, 0 );
+} )();
+
+out( "== usage statistics (telemetry) ==" );
+( function() {
+   var KEYS = [ "event", "script", "pi", "os", "install", "optics", "telescope", "aperture_mm", "obstruction_pct",
+                "scale_arcsec", "scale_source", "color", "bands", "mode", "amount", "max_boost", "protect_stars",
+                "in_place", "megapixels", "seconds", "error" ];
+   // Decode a posted body back into { key: value } with the script's own field map.
+   function record( R ) {
+      var post = R.posts[0];
+      if ( !post ) return null;
+      var byEntry = {}, fields = R.x.TELEMETRY.fields, rec = {};
+      for ( var k in fields ) byEntry[ fields[k] ] = k;
+      post.body.split( "&" ).forEach( function( pair ) {
+         var i = pair.indexOf( "=" );
+         rec[ byEntry[ pair.substr( 0, i ) ] || ( "?" + pair.substr( 0, i ) ) ] = decodeURIComponent( pair.substr( i + 1 ) );
+      } );
+      return rec;
+   }
+   function silent( R ) { return !R.has( /usage statistics|Usage statistics/i ); }
+
+   // the shipped form: well-formed url, one distinct entry per column
+   var X0 = runScript( { cancel: true, telemetry: true } ).x;
+   var shippedUrl = ( /^ {3}url: {3}"([^"]*)",/m.exec( src ) || [] )[1];
+   check( "shipped form url is a Google Form formResponse (or empty)",
+          shippedUrl === "" || /^https:\/\/docs\.google\.com\/forms\/d\/e\/[\w-]+\/formResponse$/.test( shippedUrl ), shippedUrl );
+   eq( "one form field per column, in order", Object.keys( X0.TELEMETRY.fields ), KEYS );
+   var ids = KEYS.map( function( k ) { return X0.TELEMETRY.fields[k]; } );
+   check( "every field is entry.<number>", ids.every( function( v ) { return /^entry\.\d+$/.test( v ); } ), ids );
+   eq( "field ids are distinct", ids.filter( function( v, i ) { return ids.indexOf( v ) === i; } ).length, KEYS.length );
+
+   // not configured (empty url): no checkbox, nothing sent
+   var R = runScript( { color: true, median: 0.02 } );
+   eq( "not configured: nothing posted", R.posts.length, 0 );
+   check( "not configured: checkbox hidden", R.dialogs[0].telemetryBox.visible === false );
+
+   // configured, default on, RGB run with RASA 8 from the list
+   R = runScript( { color: true, median: 0.02, telemetry: true,
+      keywords: [ { name: "FOCALLEN", value: "400" }, { name: "XPIXSZ", value: "3.76" }, { name: "OBJECT", value: "M 64" },
+                  { name: "SITELAT", value: "50.45" } ],
+      tweak: function( d ) {
+         var i = d.telescopeCombo.items.findIndex( function( t ) { return /RASA 8/.test( t ); } );
+         d.telescopeCombo.currentItem = i; d.applyTelescope( i );
+      } } );
+   check( "configured: no exception", !R.threw && !R.has( /^ERROR/ ), String( R.threw ) );
+   check( "configured: checkbox shown and ticked by default", R.dialogs[0].telemetryBox.visible === true && R.dialogs[0].telemetryBox.checked === true );
+   eq( "one record posted", R.posts.length, 1 );
+   var post = R.posts[0];
+   eq( "posted to the form, form-encoded, 4 s timeout, reply discarded",
+       [ post.url, post.headers, post.timeout, post.discardsReply ],
+       [ "https://forms.example/formResponse", [ "Content-Type: application/x-www-form-urlencoded" ], 4, true ] );
+   check( "nothing about statistics in the console", silent( R ) );
+   var rec = record( R );
+   eq( "row: event, versions, platform", [ rec.event, rec.script, rec.pi, rec.os ], [ "run", R.x.VERSION, "1.9.6-0", "Windows" ] );
+   check( "row: install id is 16 hex digits and stored", /^[0-9a-f]{16}$/.test( rec.install ) && R.store[ KEY + "installId" ] === rec.install );
+   eq( "row: optics columns", [ rec.optics, rec.telescope, rec.aperture_mm, rec.obstruction_pct, rec.scale_arcsec, rec.scale_source ],
+       [ "obstructed", "Celestron RASA 8", "203", "45.8", "1.939", "fits" ] );
+   eq( "row: correction columns, readable values", [ rec.color, rec.bands, rec.mode, rec.amount, rec.max_boost, rec.protect_stars, rec.in_place ],
+       [ "RGB", "R/G/B", "restore obstruction loss", "1", undefined, "yes", "no" ] );
+   check( "row: size and run time are plain numbers", rec.megapixels === "0.1" && /^\d+(\.\d)?$/.test( rec.seconds ), [ rec.megapixels, rec.seconds ] );
+   check( "row: only known columns are sent", Object.keys( rec ).every( function( k ) { return KEYS.indexOf( k ) >= 0; } ), Object.keys( rec ) );
+   var raw = decodeURIComponent( post.body );
+   check( "row: no image ids, keywords, object or site", !/target|M 64|OBJECT|SITELAT|50\.45|FOCALLEN/.test( raw ), raw );
+   eq( "telemetry choice remembered", R.store[ KEY + "telemetry" ], true );
+
+   // the same installation keeps its id
+   var R2 = runScript( { color: false, median: 0.02, telemetry: true, store: R.store } );
+   eq( "install id is stable across runs", record( R2 ).install, rec.install );
+   eq( "mono is written as mono", record( R2 ).color, "mono" );
+
+   // refractor, diffraction removal
+   R = runScript( { color: false, median: 0.02, telemetry: true,
+      tweak: function( d ) { d.opticsTypeCombo.currentItem = 1; d.opticsTypeCombo.onItemSelected( 1 ); d.maxBoost.setValue( 1.5 ); } } );
+   rec = record( R );
+   eq( "refractor row", [ rec.optics, rec.telescope, rec.obstruction_pct, rec.mode, rec.max_boost, rec.bands, rec.scale_source ],
+       [ "refractor", "refractor", "0", "refractor: remove diffraction", "1.5", "L", "fields" ] );
+
+   // switched off in the dialog: nothing sent
+   R = runScript( { color: true, median: 0.02, telemetry: true, tweak: function( d ) { d.telemetryBox.checked = false; } } );
+   eq( "unticked: nothing posted", R.posts.length, 0 );
+   eq( "unticked choice remembered", R.store[ KEY + "telemetry" ], false );
+
+   // cancelled dialog: nothing sent
+   eq( "cancelled: nothing posted", runScript( { cancel: true, telemetry: true } ).posts.length, 0 );
+
+   // network down / refused / native throw: the run still succeeds, silently
+   R = runScript( { color: true, median: 0.02, telemetry: true, netFail: true } );
+   check( "offline: run succeeds, nothing in the console", !R.has( /^ERROR/ ) && R.has( /Result\s+: target_oc/ ) && silent( R ) );
+   R = runScript( { color: true, median: 0.02, telemetry: true, netCode: 403 } );
+   check( "HTTP 403: run succeeds, silent", !R.has( /^ERROR/ ) && silent( R ) );
+   check( "HTTP 403 counts as not accepted", R.x.reportUsage( null, { event: "run" } ) === false );
+   R = runScript( { color: true, median: 0.02, telemetry: true, netThrow: true } );
+   check( "native throw: swallowed, run succeeds, silent", !R.threw && !R.has( /^ERROR/ ) && silent( R ) );
+   check( "accepted record reports true", runScript( { cancel: true, telemetry: true } ).x.reportUsage( null, { event: "run" } ) === true );
+
+   // a failed run is reported with its (scrubbed) error
+   R = runScript( { color: false, median: 0.02, telemetry: true,
+      failProcess: function( kind ) { if ( kind === "Convolution" ) throw "Convolution failed reading E:\\2026\\RedCat91\\M 64\\stack.xisf"; } } );
+   rec = record( R );
+   check( "error run: the error is still shown", R.has( /^ERROR: unexpected exception/ ) );
+   eq( "error row: event and parameters", [ rec && rec.event, rec && rec.mode ], [ "error", "restore obstruction loss" ] );
+   check( "error row: path with spaces fully scrubbed", rec && rec.error === "Convolution failed reading <path>", rec && rec.error );
+
+   // helpers
+   var X = runScript( { cancel: true } ).x;
+   eq( "scrubText: quoted path with a space, unquoted Unix path", X.scrubText( 'open "C:/data/a b.xisf" and /home/me/x.fits failed' ),
+       'open "<path>" and <path>' );
+   eq( "scrubText: unquoted Windows path with spaces runs to the end of the line",
+       X.scrubText( "cannot read E:\\2026\\M 64\\a.xisf\nnext line" ), "cannot read <path>\nnext line" );
+   eq( "scrubText: text without paths is kept", X.scrubText( "PixelMath failed while writing the result" ), "PixelMath failed while writing the result" );
+   eq( "scrubText: at most 300 characters", X.scrubText( new Array( 500 ).join( "x" ) ).length, 300 );
+   eq( "round", [ X.round( 1.23456, 2 ), X.round( 45.849, 1 ) ], [ 1.23, 45.8 ] );
+   eq( "yesNo", [ X.yesNo( true ), X.yesNo( 0 ) ], [ "yes", "no" ] );
+   eq( "telemetryRecord without parameters (early failure)", Object.keys( X.telemetryRecord( null, { event: "error", error: "boom" } ) ),
+       [ "event", "script", "pi", "os", "install", "error" ] );
+   eq( "telemetryBody: known keys only, encoded, in field order",
+       X.telemetryBody( { error: "a&b=c", event: "run", junk: "x", amount: 0.5, max_boost: undefined } ),
+       X.TELEMETRY.fields.event + "=run&" + X.TELEMETRY.fields.amount + "=0.5&" + X.TELEMETRY.fields.error + "=a%26b%3Dc" );
+   check( "sendTelemetry is a no-op when not configured", X.sendTelemetry( { event: "run" } ) === false );
+   check( "configuration format is checked", ( function() {
+      var keep = X.TELEMETRY.fields.event;
+      X.TELEMETRY.url = "https://f/formResponse"; X.TELEMETRY.fields.event = "entry.x";
+      var bad = X.telemetryConfigured();
+      X.TELEMETRY.fields.event = keep;
+      var good = X.telemetryConfigured();
+      X.TELEMETRY.url = "";
+      return !bad && good;
+   } )() );
+   var S = runScript( { cancel: true, store: {} } );
+   S.store[ KEY + "installId" ] = "not-an-id";
+   check( "a damaged install id is replaced", /^[0-9a-f]{16}$/.test( S.x.installId() ) && S.store[ KEY + "installId" ] !== "not-an-id" );
 } )();
 
 out( "== mode names and descriptions ==" );

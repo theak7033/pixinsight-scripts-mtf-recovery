@@ -12,7 +12,7 @@ The experimental *Remove all diffraction* mode goes one step further and also un
 diffraction of the aperture itself (`H = 1 / MTF`, Wiener-limited), so the script works on
 **refractors** too: choose *Optics: Refractor*.
 
-Status: **v0.2.0, runs inside PixInsight** on an RGB RASA 8 stack, both with FITS keywords
+Status: **v0.3.0, runs inside PixInsight** on an RGB RASA 8 stack, both with FITS keywords
 and plate-solved (scale read from the solution; the new image keeps the FITS header and
 the plate solution); the measured noise gain matches the designed filter in every mode.
 In-place mode with a mask and mono images are not yet tried in PixInsight. Design and
@@ -118,13 +118,31 @@ refractor's own diffraction blur instead (experimental):
 
 ### Telescopes in the list
 
-Askar N160 · Celestron C6 + Hyperstar · Celestron EdgeHD 8" · Celestron RASA 8 ·
-Celestron RASA 11 · Sharpstar HNT 130 · Sharpstar HNT 150 · Sky-Watcher 130/650 PDS ·
-Sky-Watcher Quattro 150P · Sky-Watcher Quattro 250P · Takahashi Epsilon 130 ·
-TS-Optics GSO 8" RC
+- **Celestron:** RASA 8 · RASA 11 · RASA 36 (14″) · C6 + Hyperstar · EdgeHD 8″
+- **Sky-Watcher Explorer PDS:** 130PDS · 150PDS · 200PDS · 250PDS · 300PDS
+- **Sky-Watcher Quattro:** 150P · 200P (8″) · 250P (10″) · 300P (12″)
+- **Takahashi Epsilon:** ε-130D · ε-160ED · ε-180ED
+- **Others:** Askar N160 · Sharpstar HNT 130 · Sharpstar HNT 150 · TS-Optics GSO 8″ RC
 
-Obstruction figures are derived from nominal and effective f-ratios and are good to about
-half a percentage point; overwrite the field if you know your exact secondary size.
+The Sky-Watcher, Takahashi and RASA 36 figures are the manufacturer's secondary-mirror (minor axis) or
+central-obstruction sizes; the others are derived from nominal and effective f-ratios and are
+good to about half a percentage point. Overwrite the field if you know your exact secondary
+size.
+
+### Usage statistics
+
+After each run the script can send one **anonymous** record so its author can see how it is
+used and what fails. It is **on by default**; untick *Send anonymous usage statistics* (next to
+*Run*) to switch it off — the choice is remembered. It works silently, without console messages.
+
+Sent: script and PixInsight version, operating system, a random installation id (made once,
+kept only in PixInsight's settings), optics type, telescope from the list (or "custom"),
+aperture, obstruction, image scale and where it came from, band, mode, amount, max boost, star
+protection, in-place, colour or mono, image size in megapixels, run time, and the error message
+if the run failed (with file paths removed).
+
+Never sent: image data, file names or paths, FITS keywords, object names, coordinates or site
+locations. Without a network nothing happens; the run is never affected.
 
 ### Limits
 

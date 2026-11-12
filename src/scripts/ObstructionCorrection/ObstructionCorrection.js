@@ -1,6 +1,6 @@
 #engine v8
 // ============================================================
-// ObstructionCorrection.js — PixInsight Script  v0.2.0
+// ObstructionCorrection.js — PixInsight Script  v0.3.0
 //
 // Restores the contrast a telescope's central obstruction removes at
 // medium spatial frequencies, by filtering a LINEAR image with
@@ -79,25 +79,47 @@ function obstructionGain( nu, eps ) {
 //   Refractors and other unobstructed optics may stay in the table; only
 //   records with an obstruction reach the drop-down (see obstructedOptics).
 //
-// SOURCE: the owner's optics spreadsheet (filter band-shift study), rows
-// whose corrected f-ratio Fc exceeds the nominal F. Derived per row as
-//   obstruction = sqrt( 1 - (F/Fc)^2 ),  aperture = effective aperture /
-//   sqrt( 1 - obstruction^2 ) (rounded to the nominal mm),  focal = aperture * F.
-// F and Fc carry two decimals, so obstructionPct is good to about +-0.5.
+// SOURCES
+//  * obstructionPct records: the owner's optics spreadsheet (filter band-shift
+//    study), rows whose corrected f-ratio Fc exceeds the nominal F. Derived as
+//      obstruction = sqrt( 1 - (F/Fc)^2 ),  aperture = effective aperture /
+//      sqrt( 1 - obstruction^2 ) (rounded to the nominal mm),  focal = aperture * F.
+//    F and Fc carry two decimals, so obstructionPct is good to about +-0.5.
+//  * obstructionMm records (added 2026-11-12 at the owner's request): the
+//    manufacturer's specification of primary diameter, focal length and
+//    secondary minor axis (Sky-Watcher) or central obstruction (Celestron),
+//    as published by Sky-Watcher dealers (firstlightoptics.com, altairastro.com,
+//    groversoptics.com) and Celestron. Takahashi Epsilon: secondary from the
+//    e-130D manual (63 mm; one Takahashi catalogue says 64 mm), deltaoptical.pl
+//    for the e-160ED (63 mm, 39 %), astropixels.com and agenaastro.com for the
+//    e-180ED (80 mm, 44 %, 180 mm clear aperture of a 190 mm primary).
+//    Where the owner's sheet and the manufacturer differed (Quattro 150P:
+//    34.4 % vs 64 mm = 42.7 %; Quattro 250P: 30.5 % vs 82 mm = 32.3 %;
+//    Epsilon 130: 50.4 % vs 63 mm = 48.5 %), the manufacturer's figure is used.
+//    Discontinued Epsilons (200, 210, 250, 350) are left out: no reliable specs.
 // Do not add entries from memory — a wrong obstruction figure silently
-// gives a wrong filter. Unobstructed rows of the sheet are left out.
+// gives a wrong filter. Every record needs a source above.
 // ------------------------------------------------------------
 var OPTICS = [
    { maker: "Celestron",    model: "RASA 8",                 type: "RASA",                apertureMm: 203, focalMm:  406, obstructionPct: 45.8 },
    { maker: "Celestron",    model: "C6 + Hyperstar (RASA 6)", type: "SCT + Hyperstar",    apertureMm: 152, focalMm:  300, obstructionPct: 50.3 },
    { maker: "Celestron",    model: "RASA 11",                type: "RASA",                apertureMm: 279, focalMm:  620, obstructionPct: 40.7 },
+   { maker: "Celestron",    model: "RASA 36 (14\")",         type: "RASA",                apertureMm: 356, focalMm:  790, obstructionMm: 158 },
    { maker: "Sharpstar",    model: "HNT 150",                type: "Hyperbolic Newtonian", apertureMm: 150, focalMm:  420, obstructionPct: 46.9 },
    { maker: "Sharpstar",    model: "HNT 130",                type: "Hyperbolic Newtonian", apertureMm: 130, focalMm:  364, obstructionPct: 49.9 },
    { maker: "Askar",        model: "N160",                   type: "Newtonian astrograph", apertureMm: 160, focalMm:  544, obstructionPct: 43.7 },
-   { maker: "Takahashi",    model: "Epsilon 130",            type: "Hyperbolic astrograph", apertureMm: 130, focalMm:  430, obstructionPct: 50.4 },
-   { maker: "Sky-Watcher",  model: "Quattro 250P (10\")",    type: "Newtonian",           apertureMm: 250, focalMm: 1000, obstructionPct: 30.5 },
-   { maker: "Sky-Watcher",  model: "Quattro 150P",           type: "Newtonian",           apertureMm: 150, focalMm:  600, obstructionPct: 34.4 },
-   { maker: "Sky-Watcher",  model: "130/650 PDS",            type: "Newtonian",           apertureMm: 130, focalMm:  650, obstructionPct: 36.0 },
+   { maker: "Takahashi",    model: "Epsilon-130D",           type: "Hyperbolic astrograph", apertureMm: 130, focalMm:  430, obstructionMm:  63 },
+   { maker: "Takahashi",    model: "Epsilon-160ED",          type: "Hyperbolic astrograph", apertureMm: 160, focalMm:  530, obstructionMm:  63 },
+   { maker: "Takahashi",    model: "Epsilon-180ED",          type: "Hyperbolic astrograph", apertureMm: 180, focalMm:  500, obstructionMm:  80 },
+   { maker: "Sky-Watcher",  model: "Quattro 150P",           type: "Newtonian f/4",       apertureMm: 150, focalMm:  600, obstructionMm:  64 },
+   { maker: "Sky-Watcher",  model: "Quattro 200P (8\")",     type: "Newtonian f/4",       apertureMm: 205, focalMm:  800, obstructionMm:  70 },
+   { maker: "Sky-Watcher",  model: "Quattro 250P (10\")",    type: "Newtonian f/4",       apertureMm: 254, focalMm: 1000, obstructionMm:  82 },
+   { maker: "Sky-Watcher",  model: "Quattro 300P (12\")",    type: "Newtonian f/4",       apertureMm: 305, focalMm: 1200, obstructionMm: 100 },
+   { maker: "Sky-Watcher",  model: "Explorer 130PDS",        type: "Newtonian",           apertureMm: 130, focalMm:  650, obstructionMm:  47 },
+   { maker: "Sky-Watcher",  model: "Explorer 150PDS",        type: "Newtonian",           apertureMm: 150, focalMm:  750, obstructionMm:  52 },
+   { maker: "Sky-Watcher",  model: "Explorer 200PDS",        type: "Newtonian",           apertureMm: 200, focalMm: 1000, obstructionMm:  58 },
+   { maker: "Sky-Watcher",  model: "Explorer 250PDS",        type: "Newtonian",           apertureMm: 254, focalMm: 1200, obstructionMm:  63 },
+   { maker: "Sky-Watcher",  model: "Explorer 300PDS",        type: "Newtonian",           apertureMm: 305, focalMm: 1500, obstructionMm:  70 },
    { maker: "TS-Optics",    model: "GSO 8\" RC",             type: "Ritchey-Chretien",    apertureMm: 203, focalMm: 1624, obstructionPct: 41.9 },
    { maker: "Celestron",    model: "EdgeHD 8\"",             type: "SCT",                 apertureMm: 203, focalMm: 2032, obstructionPct: 33.9 }
 ];
@@ -367,7 +389,7 @@ function kernelNoiseGain( kernel ) {
 // ============================================================
 //  CONFIGURATION — internals; user-facing parameters live in the dialog
 // ============================================================
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const SETTINGS_KEY = "ObstructionCorrection/";
 
 const DEFAULT_APERTURE_MM     = 200;
@@ -729,7 +751,19 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.cancel_Button = new PushButton( this );
       this.cancel_Button.text = "Cancel";
       this.cancel_Button.onClick = function() { self.cancel(); };
+      this.telemetryBox = new CheckBox( this );
+      this.telemetryBox.text = "Send anonymous usage statistics";
+      this.telemetryBox.checked = true;
+      this.telemetryBox.toolTip =
+         "<p>After each run the script sends one anonymous record so its author can see how it is used " +
+         "and what fails: script and PixInsight version, operating system, a random installation id, " +
+         "optics type, telescope from the list (or custom), aperture, obstruction, image scale and where " +
+         "it came from, band, mode, amount, max boost, star protection, in-place, colour or mono, image " +
+         "size in megapixels, run time, and the error message if the run failed.</p>" +
+         "<p>Never sent: image data, file names or paths, FITS keywords, coordinates or locations.</p>";
+      this.telemetryBox.visible = telemetryConfigured();
       this.buttonSizer = new HorizontalSizer;
+      this.buttonSizer.add( this.telemetryBox );
       this.buttonSizer.addStretch();
       this.buttonSizer.add( this.ok_Button );
       this.buttonSizer.addSpacing( 8 );
@@ -859,6 +893,10 @@ var ObstructionCorrectionDialog = class extends Dialog {
          view: view,
          isColor: isColor,
          refractor: this.isRefractor(),
+         telescopeKey: this.isRefractor() ? "refractor"
+            : this.telescopeCombo.currentItem > 0
+               ? opticsKey( this.optics[ this.telescopeCombo.currentItem - 1 ] ) : "custom",
+         scaleSource: this.scaleOrigin || "fields",
          telescope: this.isRefractor() ? "refractor"
             : this.telescopeCombo.currentItem > 0
                ? opticsLabel( this.optics[ this.telescopeCombo.currentItem - 1 ] ) : "custom",
@@ -909,6 +947,7 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.satThreshold.setValue( readSetting( "satThreshold", DataType_Double, DEFAULT_SAT_THRESHOLD ) );
       this.protectBox.checked = readSetting( "protect", DataType_Boolean, true );
       this.inPlaceBox.checked = readSetting( "inPlace", DataType_Boolean, false );
+      this.telemetryBox.checked = readSetting( "telemetry", DataType_Boolean, true );
       let opticsType = readSetting( "opticsType", DataType_Int32, OPTICS_OBSTRUCTED );
       this.opticsTypeCombo.currentItem = ( opticsType === OPTICS_REFRACTOR ) ? OPTICS_REFRACTOR : OPTICS_OBSTRUCTED;
       let mode = readSetting( "mode", DataType_Int32, 0 );
@@ -934,6 +973,7 @@ var ObstructionCorrectionDialog = class extends Dialog {
       writeSetting( "satThreshold", DataType_Double, this.satThreshold.value );
       writeSetting( "protect", DataType_Boolean, this.protectBox.checked );
       writeSetting( "inPlace", DataType_Boolean, this.inPlaceBox.checked );
+      writeSetting( "telemetry", DataType_Boolean, this.telemetryBox.checked );
       writeSetting( "mode", DataType_Int32, this.modeCombo.currentItem );
       writeSetting( "opticsType", DataType_Int32, this.opticsTypeCombo.currentItem );
       writeSetting( "band", DataType_Int32, this.bandCombo.currentItem );
@@ -1018,6 +1058,152 @@ function copyMetadata( fromWin, toWin ) {
       }
    } catch ( e ) { /* not essential */ }
    return copied;
+}
+
+// ============================================================
+//  Anonymous usage statistics
+//
+//  One row per run is posted to a Google Form with one short-answer question
+//  per parameter, so the linked Google Sheet gets one column per parameter.
+//  Sent AFTER the processing, with a short timeout, silently: nothing is
+//  written to the console, and a failure never affects the run. Never sent:
+//  image data, file names or paths, FITS keywords, coordinates or locations.
+//  The dialog checkbox switches it off. An empty url means telemetry is
+//  inactive (no checkbox, nothing sent).
+// ============================================================
+var TELEMETRY = {
+   // Google Form "ObstructionCorrection usage" (owner's account).
+   url:   "https://docs.google.com/forms/d/e/1FAIpQLSdp7GP9EEJy58e2LqsbOTQfFAJpdd8CPMs76KY3EG4IqHwpzg/formResponse",
+   // record key -> form question ("Column title" in the sheet)
+   fields: {
+      event:           "entry.1399310065",   // Event
+      script:          "entry.956829839",    // Script version
+      pi:              "entry.781800222",    // PixInsight version
+      os:              "entry.1092752686",   // OS
+      install:         "entry.791906037",    // Installation ID
+      optics:          "entry.1570238177",   // Optics
+      telescope:       "entry.1986597872",   // Telescope
+      aperture_mm:     "entry.1707428509",   // Aperture (mm)
+      obstruction_pct: "entry.318897089",    // Obstruction (%)
+      scale_arcsec:    "entry.883667866",    // Image scale (arcsec/px)
+      scale_source:    "entry.1869592731",   // Scale source
+      color:           "entry.57354704",     // Colour
+      bands:           "entry.17488579",     // Bands
+      mode:            "entry.131073579",    // Mode
+      amount:          "entry.1844912414",   // Amount
+      max_boost:       "entry.326216635",    // Max boost
+      protect_stars:   "entry.1521305557",   // Protect stars
+      in_place:        "entry.1832806523",   // In place
+      megapixels:      "entry.692787706",    // Megapixels
+      seconds:         "entry.1490595004",   // Run time (s)
+      error:           "entry.2009807186"    // Error
+   },
+   timeoutS: 4
+};
+
+function telemetryConfigured() {
+   // No "//" inside a regex literal: PixInsight's preprocessor takes it for a comment.
+   let u = String( TELEMETRY.url );
+   return ( u.indexOf( "https:" + "//" ) === 0 || u.indexOf( "http:" + "//" ) === 0 )
+          && !!TELEMETRY.fields && /^entry\.\d+$/.test( TELEMETRY.fields.event || "" );
+}
+
+// Random id made once per installation and kept in Settings: it lets the
+// statistics count distinct installations without knowing whose they are.
+function installId() {
+   let id = readSetting( "installId", DataType_String, "" );
+   if ( !/^[0-9a-f]{16}$/.test( id ) ) {
+      id = "";
+      for ( let i = 0; i < 16; ++i )
+         id += Math.floor( Math.random() * 16 ).toString( 16 );
+      writeSetting( "installId", DataType_String, id );
+   }
+   return id;
+}
+
+// Error text without file-system paths, at most 300 characters. Paths may
+// contain spaces, so a path runs to the closing quote or the end of the line:
+// this may hide a little more than the path, never less.
+function scrubText( text ) {
+   return String( text )
+      .replace( /[A-Za-z]:[\\\/][^"'\n]*/g, "<path>" )         // C:\... or C:/...
+      .replace( /(^|[\s"'(])\/[^"'\n]*/g, "$1<path>" )          // /home/...
+      .substr( 0, 300 );
+}
+
+function round( x, digits ) {
+   let f = Math.pow( 10, digits );
+   return Math.round( x * f ) / f;
+}
+
+function yesNo( flag ) {
+   return flag ? "yes" : "no";
+}
+
+// The anonymous record of one run, one readable value per column.
+// p: dialog parameters (may be null); info: { event, width, height, seconds, error }.
+function telemetryRecord( p, info ) {
+   let r = {
+      event: info.event,
+      script: VERSION,
+      pi: CoreApplication.versionMajor + "." + CoreApplication.versionMinor + "."
+          + CoreApplication.versionRelease + "-" + CoreApplication.versionRevision,
+      os: String( CoreApplication.platform ),
+      install: installId()
+   };
+   if ( p ) {
+      r.optics = p.refractor ? "refractor" : "obstructed";
+      r.telescope = p.telescopeKey;
+      r.aperture_mm = Math.round( p.apertureMm );
+      r.obstruction_pct = round( 100 * p.eps, 1 );
+      r.scale_arcsec = round( p.scale, 3 );
+      r.scale_source = p.scaleSource;
+      r.color = p.isColor ? "RGB" : "mono";
+      r.bands = p.bands.join( "/" );
+      r.mode = modeName( p.mode, p.refractor );
+      r.amount = round( p.amount, 2 );
+      if ( p.mode === MODE_IDEAL_APERTURE ) r.max_boost = round( p.maxBoost, 2 );
+      r.protect_stars = yesNo( p.protect );
+      r.in_place = yesNo( p.inPlace );
+   }
+   if ( info.width && info.height ) r.megapixels = round( info.width * info.height / 1e6, 1 );
+   if ( info.seconds !== undefined ) r.seconds = round( info.seconds, 1 );
+   if ( info.error ) r.error = scrubText( info.error );
+   return r;
+}
+
+// Form-encoded body: one entry.<id>=value pair per known, present key.
+function telemetryBody( record ) {
+   let parts = [];
+   for ( let key in TELEMETRY.fields )
+      if ( record[key] !== undefined && record[key] !== null )
+         parts.push( TELEMETRY.fields[key] + "=" + encodeURIComponent( String( record[key] ) ) );
+   return parts.join( "&" );
+}
+
+// Posts one record; true when the server accepted it. Never throws.
+function sendTelemetry( record ) {
+   if ( !telemetryConfigured() )
+      return false;
+   try {
+      let T = new NetworkTransfer;
+      T.setURL( TELEMETRY.url );
+      T.setConnectionTimeout( TELEMETRY.timeoutS );
+      T.setCustomHTTPHeaders( [ "Content-Type: application/x-www-form-urlencoded" ] );
+      T.onDownloadDataAvailable = function() { return true; };      // the reply page is not needed
+      let ok = T.post( telemetryBody( record ) );
+      return !!ok && T.responseCode >= 200 && T.responseCode < 400;
+   } catch ( e ) {
+      return false;
+   }
+}
+
+// Sends the record of this run, silently, if telemetry is configured and not
+// switched off. Returns whether it was accepted (for the tests only).
+function reportUsage( p, info ) {
+   if ( !telemetryConfigured() || !readSetting( "telemetry", DataType_Boolean, true ) )
+      return false;
+   return sendTelemetry( telemetryRecord( p, info ) );
 }
 
 // ============================================================
@@ -1182,15 +1368,26 @@ function main() {
       return;
    }
 
+   runState.params = p;
+   runState.width = image.width;
+   runState.height = image.height;
+   let t0 = Date.now();
    let resultId = applyCorrection( p );
 
    log( "------------------------------------------------------------" );
    log( " Result           : " + resultId + ( p.inPlace ? "  (replaced; undo with Ctrl/Cmd+Z)" : "  (new image)" ) );
+   reportUsage( p, { event: "run", width: image.width, height: image.height, seconds: ( Date.now() - t0 ) / 1000 } );
    log( "============================================================" );
 }
+
+// What main() got to, so a failure can still be reported.
+var runState = { params: null, width: 0, height: 0 };
 
 try {
    main();
 } catch ( e ) {
    log( "ERROR: unexpected exception — " + errText( e ) );
+   try {
+      reportUsage( runState.params, { event: "error", width: runState.width, height: runState.height, error: errText( e ) } );
+   } catch ( e2 ) { /* never let statistics hide the real error */ }
 }

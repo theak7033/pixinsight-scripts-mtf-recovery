@@ -50,6 +50,10 @@ try {
    check( "script parses (" + e + ")", false, true );
 }
 check( "'#engine v8' is the first line", src.indexOf( "#engine v8\n" ), 0 );
+// PixInsight's preprocessor strips "//" to the end of the line even inside a
+// regex literal (verified in 1.9.6: /^https?:\/\// became a syntax error).
+check( "no regex literal contains an escaped slash followed by /",
+       src.split( "\n" ).filter( function( l ) { return /\\\/\//.test( l ); } ).length, 0 );
 check( "#feature-info is a single line",
        /^#feature-info[^\n]*\\\s*$/m.test( src ), false );
 
@@ -153,7 +157,14 @@ var bad = M.OPTICS.filter( function( o ) {
           || ( o.obstructionMm >= o.apertureMm ) || ( o.obstructionPct >= 100 );
 } );
 check( "every shipped record is well-formed", bad.length, 0 );
-check( "12 obstructed optics from the owner's sheet", M.obstructedOptics( M.OPTICS ).length, 12 );
+check( "21 obstructed optics (owner's sheet + manufacturer specs)", M.obstructedOptics( M.OPTICS ).length, 21 );
+check( "full Sky-Watcher PDS, Quattro, Celestron RASA and Takahashi Epsilon lineups",
+       [ "Explorer 130PDS", "Explorer 150PDS", "Explorer 200PDS", "Explorer 250PDS", "Explorer 300PDS",
+         "Quattro 150P", "Quattro 200P", "Quattro 250P", "Quattro 300P", "RASA 8", "RASA 11", "RASA 36",
+         "Epsilon-130D", "Epsilon-160ED", "Epsilon-180ED" ]
+          .filter( function( m ) { return !M.OPTICS.some( function( o ) { return o.model.indexOf( m ) === 0; } ); } ).length, 0 );
+check( "every record has one obstruction figure, in a sane range",
+       M.OPTICS.filter( function( o ) { var e = M.opticsObstructionRatio( o ); return !( e > 0.15 && e < 0.6 ); } ).length, 0 );
 M.obstructedOptics( M.OPTICS ).forEach( function( o ) { out( "        " + M.opticsLabel( o ) ); } );
 var labels = M.OPTICS.map( M.opticsLabel );
 check( "no duplicate labels", labels.filter( function( l, i ) { return labels.indexOf( l ) !== i; } ).length, 0 );
