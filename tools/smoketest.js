@@ -59,7 +59,8 @@ var EXPORTS = [
    "convolveWithKernel", "gaussianBlur", "copyMetadata", "applyCorrection", "main", "log",
    "ObstructionCorrectionDialog", "buildKernel", "obstructionGain", "kernelResponse",
    "imageScaleArcsec", "opticsLabel", "opticsKey", "obstructedOptics", "OPTICS", "BANDS",
-   "MODE_RESTORE_ONLY", "MODE_TRUE_EQUIVALENT"
+   "MODE_RESTORE_ONLY", "MODE_TRUE_EQUIVALENT", "MODE_IDEAL_APERTURE", "DEFAULT_MAX_BOOST",
+   "OPTICS_OBSTRUCTED", "OPTICS_REFRACTOR", "MODE_ITEMS", "modeName", "modeDescription"
 ];
 
 // ---- the fake PixInsight ---------------------------------------------------
@@ -197,7 +198,7 @@ function runScript( opts ) {
                      // Like PixInsight 1.9.4: strings are stored 8-bit, so a
                      // character above U+00FF comes back as its low byte.
                      R.store[k] = ( typeof v === "string" )
-                        ? v.replace( /[^ -ÿ]/g, function( c ) { return String.fromCharCode( c.charCodeAt( 0 ) & 0xFF ); } )
+                        ? v.replace( /[^\u0000-\u00FF]/g, function( c ) { return String.fromCharCode( c.charCodeAt( 0 ) & 0xFF ); } )
                         : v;
                   } },
       View: { viewById: function( id ) { return R.views[id] ? R.views[id].mainView : null; } },
@@ -301,10 +302,37 @@ out( "== end to end: mono narrowband, true mode, no protection, FITS scale ==" )
       keywords: [ { name: "FOCALLEN", value: "2032." }, { name: "XPIXSZ", value: "3.76" } ],
       tweak: function( d ) { d.bandCombo.currentItem = 5; d.protectBox.checked = false; d.modeCombo.currentItem = 1; } } );
    check( "no exception, no ERROR line", !R.threw && !R.has( /^ERROR/ ), String( R.threw ) );
-   check( "band and mode logged", R.has( /bands Ha {3}true equivalent/ ) );
+   check( "band and mode logged", R.has( /bands Ha {3}exact unobstructed equivalent/ ) );
    check( "scale from FITS keywords", R.has( /scale 0\.382/ ) );
    check( "no star mask built", !R.calls.some( function( c ) { return /starmask/.test( c ); } ) );
    check( "plain write-back expression", /expr: oc_channel_0 {2}-> target_oc$/.test( R.calls[ R.calls.length - 1 ] ) );
+} )();
+
+out( "== end to end: RGB, ideal-aperture mode ==" );
+( function() {
+   var R = runScript( { color: true, median: 0.02,
+      tweak: function( d ) { d.modeCombo.currentItem = 2; d.modeCombo.onItemSelected( 2 ); d.maxBoost.setValue( 2.5 ); } } );
+   check( "no exception, no ERROR line", !R.threw && !R.has( /^ERROR/ ), String( R.threw ) );
+   check( "mode and max boost logged", R.has( /remove all diffraction \(max boost x2\.50\)/ ) );
+   eq( "three kernels built", R.lines.filter( function( l ) { return /^Kernel /.test( l ); } ).length, 3 );
+   eq( "max boost and mode remembered", [ R.store[ KEY + "mode" ], R.store[ KEY + "maxBoost" ] ], [ 2, 2.5 ] );
+} )();
+
+out( "== end to end: Optics = Refractor ==" );
+( function() {
+   var R = runScript( { color: true, median: 0.02,
+      tweak: function( d ) {
+         d.aperture.setValue( 80 ); d.scale.setValue( 1.616 );
+         d.opticsTypeCombo.currentItem = 1; d.opticsTypeCombo.onItemSelected( 1 );
+      } } );
+   check( "no exception, no ERROR line", !R.threw && !R.has( /^ERROR/ ), String( R.threw ) );
+   check( "the obstruction field (35 %) is ignored: clear aperture logged", R.has( /obstruction 0\.0 % \(clear aperture\)/ ) );
+   check( "telescope and mode logged as refractor", R.has( /^Telescope\s+: refractor/ ) && R.has( /refractor: remove diffraction \(max boost x3\.00\)/ ) );
+   eq( "optics type remembered", R.store[ KEY + "opticsType" ], 1 );
+   eq( "three kernels built", R.lines.filter( function( l ) { return /^Kernel /.test( l ); } ).length, 3 );
+   var g = /^Kernel G .*peak boost x([\d.]+)/.exec( R.lines.filter( function( l ) { return /^Kernel G/.test( l ); } )[0] || "" );
+   check( "the refractor kernel really boosts (G peak > x1.5)", g && parseFloat( g[1] ) > 1.5, g && g[1] );
+   check( "result written", R.has( /Result\s+: target_oc\s+\(new image\)/ ) );
 } )();
 
 out( "== end to end: RGB narrowband shares one kernel ==" );
@@ -338,6 +366,13 @@ out( "== main: early exits ==" );
 
    R = runScript( { median: 0.01, tweak: function( d ) { d.scale.setValue( 0 ); } } );
    check( "zero image scale rejected", R.has( /^ERROR: aperture, obstruction and image scale/ ) );
+
+   R = runScript( { median: 0.01, tweak: function( d ) { d.obstruction.setValue( -5 ); } } );
+   check( "negative obstruction rejected", R.has( /^ERROR: aperture, obstruction and image scale/ ) && R.calls.length === 0 );
+
+   R = runScript( { median: 0.01, tweak: function( d ) { d.obstruction.setValue( 0 ); } } );
+   check( "0 % obstruction with obstructed optics: nothing to do, points to Optics: Refractor",
+          R.has( /^Nothing to do: there is no central obstruction.*Optics: Refractor/ ) && R.calls.length === 0 && !R.has( /^ERROR/ ) );
 
    R = runScript( { median: 0.01, tweak: function( d ) { d.amount.setValue( 0 ); } } );
    check( "amount 0: nothing to do", R.has( /Amount is 0/ ) && R.calls.length === 0 );
@@ -658,6 +693,53 @@ out( "== dialog ==" );
    d.viewList.currentView = null;
    eq( "parameters(): no view -> mono, null view", [ d.parameters().isColor, d.parameters().view ], [ false, null ] );
 
+   // ideal-aperture mode and its Max boost control
+   eq( "three modes in the list, plain names", d.modeCombo.items, X.MODE_ITEMS );
+   d.modeCombo.currentItem = 0; d.modeCombo.onItemSelected( 0 );
+   check( "Max boost is hidden outside diffraction removal", d.maxBoost.visible === false );
+   check( "restore mode is described", /secondary mirror takes away/.test( d.modeDescription.text ), d.modeDescription.text );
+   d.modeCombo.currentItem = 1; d.modeCombo.onItemSelected( 1 );
+   check( "exact-equivalent mode is described", /exactly what an unobstructed telescope/.test( d.modeDescription.text ) );
+   d.modeCombo.currentItem = 2; d.modeCombo.onItemSelected( 2 );
+   check( "... and shown in it", d.maxBoost.visible === true );
+   check( "diffraction-removal mode is described", /removes the aperture's own diffraction blur/.test( d.modeDescription.text ) );
+   d.maxBoost.setValue( 4 ); d.maxBoost.onValueUpdated( 4 );
+   eq( "parameters(): ideal mode and max boost", [ d.parameters().mode, d.parameters().maxBoost ], [ X.MODE_IDEAL_APERTURE, 4 ] );
+   d.amount.setValue( 1 ); d.obstruction.setValue( 46 ); d.aperture.setValue( 203 ); d.scale.setValue( 1.938 ); d.bandCombo.currentItem = 0;
+   d.updateReadout();
+   var mIdeal = /Largest contrast boost: <b>&times;([\d.]+)/.exec( d.readout.text );
+   d.modeCombo.currentItem = 0; d.modeCombo.onItemSelected( 0 );
+   var mRestore = /Largest contrast boost: <b>&times;([\d.]+)/.exec( d.readout.text );
+   check( "read-out: ideal mode shows a bigger boost than restore-only",
+          mIdeal && mRestore && parseFloat( mIdeal[1] ) > parseFloat( mRestore[1] ), [ mIdeal && mIdeal[1], mRestore && mRestore[1] ] );
+   check( "Max boost hidden again", d.maxBoost.visible === false );
+   d.modeCombo.currentItem = 7;
+   eq( "an unknown combo index means restore-only", d.parameters().mode, X.MODE_RESTORE_ONLY );
+   d.modeCombo.currentItem = 0;
+
+   // 0 % with obstructed optics: hint to choose Optics: Refractor
+   d.obstruction.setValue( 0 ); d.obstruction.onValueUpdated( 0 );
+   check( "read-out: 0 % obstruction points to Optics: Refractor",
+          /No obstruction entered: for a refractor choose Optics: Refractor/.test( d.readout.text ), d.readout.text );
+   d.obstruction.setValue( 46 );
+
+   // Optics: Refractor
+   eq( "two optics types", d.opticsTypeCombo.items.length, 2 );
+   check( "obstructed optics: telescope, obstruction and mode visible",
+          d.telescopeCombo.visible && d.telescopeLabel.visible && d.obstruction.visible && d.modeCombo.visible && d.modeLabel.visible );
+   d.modeCombo.currentItem = 0;
+   d.opticsTypeCombo.currentItem = 1; d.opticsTypeCombo.onItemSelected( 1 );
+   check( "refractor: telescope list, obstruction and mode hidden",
+          !d.telescopeCombo.visible && !d.telescopeLabel.visible && !d.obstruction.visible && !d.modeCombo.visible && !d.modeLabel.visible );
+   check( "refractor: Max boost shown, refractor text", d.maxBoost.visible === true && /^<p><b>Refractor:/.test( d.modeDescription.text ) );
+   var pr = d.parameters();
+   eq( "refractor: obstruction 0, diffraction removal, labelled", [ pr.eps, pr.mode, pr.refractor, pr.telescope ],
+       [ 0, X.MODE_IDEAL_APERTURE, true, "refractor" ] );
+   check( "refractor read-out: a real boost, no hint", !/No obstruction/.test( d.readout.text ) && !/&times;1\.00/.test( d.readout.text ), d.readout.text );
+   d.opticsTypeCombo.currentItem = 0; d.opticsTypeCombo.onItemSelected( 0 );
+   check( "back to obstructed: everything visible again, the chosen mode applies",
+          d.obstruction.visible && d.modeCombo.visible && d.parameters().mode === X.MODE_RESTORE_ONLY && d.parameters().eps > 0 );
+
    // read-out
    d.amount.setValue( 0 ); d.updateReadout();
    check( "read-out notes when there is nothing to correct", /Almost nothing to correct/.test( d.readout.text ) );
@@ -716,7 +798,7 @@ out( "== dialog settings ==" );
    d.telescopeCombo.currentItem = iRasa; d.applyTelescope( iRasa );
    d.pixel.setValue( 4.63 ); d.amount.setValue( 0.7 ); d.satThreshold.setValue( 0.8 );
    d.protectBox.checked = false; d.inPlaceBox.checked = true;
-   d.modeCombo.currentItem = 1; d.bandCombo.currentItem = 6;
+   d.modeCombo.currentItem = 1; d.bandCombo.currentItem = 6; d.maxBoost.setValue( 5 );
    d.saveSettings();
    eq( "saved values", [ R.store[ KEY + "aperture" ], R.store[ KEY + "focal" ], R.store[ KEY + "pixel" ],
                          R.store[ KEY + "amount" ], R.store[ KEY + "satThreshold" ], R.store[ KEY + "protect" ],
@@ -730,6 +812,16 @@ out( "== dialog settings ==" );
          d2.protectBox.checked, d2.inPlaceBox.checked, d2.modeCombo.currentItem, d2.bandCombo.currentItem,
          d2.telescopeCombo.currentItem ],
        [ 279, 620, 4.63, 0.7, 0.8, false, true, 1, 6, iRasa ] );
+   eq( "max boost restored", d2.maxBoost.value, 5 );
+   R.store[ KEY + "mode" ] = 2;
+   var di = new X.ObstructionCorrectionDialog();
+   check( "diffraction-removal mode restored, Max boost shown", di.modeCombo.currentItem === 2 && di.maxBoost.visible === true );
+   R.store[ KEY + "opticsType" ] = 1;
+   var dr = new X.ObstructionCorrectionDialog();
+   check( "refractor restored: obstruction hidden", dr.opticsTypeCombo.currentItem === 1 && dr.obstruction.visible === false );
+   R.store[ KEY + "opticsType" ] = 9;
+   eq( "unknown optics type falls back to obstructed", new X.ObstructionCorrectionDialog().opticsTypeCombo.currentItem, 0 );
+   delete R.store[ KEY + "opticsType" ];
 
    d.telescopeCombo.currentItem = 0;
    d.saveSettings();
@@ -744,12 +836,25 @@ out( "== dialog settings ==" );
    eq( "negative band index falls back", new X.ObstructionCorrectionDialog().bandCombo.currentItem, 0 );
 } )();
 
+out( "== mode names and descriptions ==" );
+( function() {
+   var X = runScript( { cancel: true } ).x;
+   eq( "log names", [ X.modeName( X.MODE_RESTORE_ONLY, false ), X.modeName( X.MODE_TRUE_EQUIVALENT, false ),
+                      X.modeName( X.MODE_IDEAL_APERTURE, false ), X.modeName( X.MODE_RESTORE_ONLY, true ) ],
+       [ "restore obstruction loss", "exact unobstructed equivalent", "remove all diffraction", "refractor: remove diffraction" ] );
+   var texts = [ X.modeDescription( 0, false ), X.modeDescription( 1, false ), X.modeDescription( 2, false ), X.modeDescription( 0, true ) ];
+   eq( "four different descriptions", texts.filter( function( t, i ) { return texts.indexOf( t ) === i; } ).length, 4 );
+   check( "descriptions are rich-text paragraphs", texts.every( function( t ) { return /^<p>.*<\/p>$/.test( t ); } ) );
+   check( "experimental modes say so", /Experimental/.test( texts[2] ) && /Experimental/.test( texts[3] ) && !/Experimental/.test( texts[0] ) );
+} )();
+
 out( "== portable functions the pipeline does not call ==" );
 ( function() {
    var X = runScript( { cancel: true } ).x;
    near( "obstructionGain", X.obstructionGain( 0.3, 0.35 ), 1.416, 0.001 );
    var k = X.buildKernel( [ 1.35 ], 0.35, X.MODE_TRUE_EQUIVALENT, 1, 49 );
    near( "kernelResponse at DC is 1", X.kernelResponse( k, 0 ), 1, 1e-9 );
+   near( "ideal kernel: response at DC is 1", X.kernelResponse( X.buildKernel( [ 1.35 ], 0.35, X.MODE_IDEAL_APERTURE, 1, 49 ), 0 ), 1, 1e-9 );
    X.main();
    check( "main() can be called again (cancelled)", true );
 } )();

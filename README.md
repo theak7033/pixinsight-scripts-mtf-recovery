@@ -8,11 +8,15 @@ linear image with the ratio of the clear-aperture and obstructed-aperture diffra
 H(f) = MTF_clear(f) / MTF_obstructed(f, d/D)
 ```
 
-Status: **v0.1.1, runs inside PixInsight** on an RGB RASA 8 stack, both with FITS keywords
+The experimental *Remove all diffraction* mode goes one step further and also undoes the
+diffraction of the aperture itself (`H = 1 / MTF`, Wiener-limited), so the script works on
+**refractors** too: choose *Optics: Refractor*.
+
+Status: **v0.2.0, runs inside PixInsight** on an RGB RASA 8 stack, both with FITS keywords
 and plate-solved (scale read from the solution; the new image keeps the FITS header and
-the plate solution); the measured noise gain matches the designed filter. In-place mode
-with a mask and mono images are not yet tried in PixInsight. Design and roadmap:
-[PLAN.md](PLAN.md).
+the plate solution); the measured noise gain matches the designed filter in every mode.
+In-place mode with a mask and mono images are not yet tried in PixInsight. Design and
+roadmap: [PLAN.md](PLAN.md).
 
 Requires PixInsight 1.9.4 or newer (V8 JavaScript engine).
 
@@ -73,14 +77,16 @@ in **Script → Feature Scripts…** and click **Done**.
 ## Use
 
 1. Open a **linear** image (integrated, not stretched), ideally before noise reduction.
-2. Run the script and pick your telescope from the list, or choose *Custom* and enter the
-   aperture and obstruction yourself.
+2. Run the script. *Optics*: keep *With central obstruction* for a reflector, SCT or RASA
+   and pick your telescope from the list (or *Custom* and enter the aperture and
+   obstruction yourself); for a refractor choose *Refractor*, see below.
 3. Check the image scale. It is read from the plate solution when the image has one,
    otherwise from the FITS `FOCALLEN` / `XPIXSZ` keywords, otherwise from the focal length
    and pixel size fields.
 4. Pick the band for narrowband or mono-filter data; *Auto* uses R, G, B per channel for
    colour images and a broadband average for mono.
-5. **Run.** The result is a new image `<id>_oc`, or the target itself if you tick
+5. Pick the *Mode*; the text under the list says what the selected mode does.
+6. **Run.** The result is a new image `<id>_oc`, or the target itself if you tick
    *Replace the target image* (undoable, respects an active mask).
 
 The read-out under the settings shows the largest contrast boost and the background-noise
@@ -88,9 +94,27 @@ increase to expect before you run.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| Mode | Restore only | never lowers contrast; *True equivalent* also removes the small fine-scale advantage an obstructed aperture has |
+| Optics | With central obstruction | *Refractor* hides the telescope list, obstruction and mode, and removes the lens's own diffraction instead |
+| Mode | Restore obstruction loss | back to what an unobstructed telescope of the same aperture gives, never lowers contrast; *Exact unobstructed equivalent* also removes the small fine-scale advantage an obstructed aperture has; *Remove all diffraction* (experimental) also undoes the diffraction of the aperture itself, i.e. goes beyond a refractor of the same size |
+| Max boost | 3.0 | diffraction removal only (shown only then): the contrast gain never exceeds this at any scale (Wiener limit). Higher = closer to a full diffraction inverse, and more noise |
 | Amount | 1.0 | 1 = full physical correction |
 | Protect saturated stars | on, 0.95 | keeps the original image in and around clipped pixels, which would otherwise get dark rings |
+
+### Refractors
+
+A refractor has no central obstruction, so there is nothing to restore; the script removes the
+refractor's own diffraction blur instead (experimental):
+
+1. *Optics*: **Refractor**. The telescope list, obstruction and mode disappear.
+2. Enter the aperture; the scale comes from the plate solution or the FITS keywords, or from
+   the focal length and pixel size fields.
+3. *Max boost* limits the gain at any scale (default 3). Watch the read-out: small apertures at
+   short focal length are sampled close to their diffraction limit, so the boost — and the
+   noise — are large. Example, 80 mm f/6 with 3.76 µm pixels (1.62″/px): contrast up to ×2.6,
+   background noise +68 %.
+4. On seeing-limited data start with *Max boost* 1.5–2. Measured on a RedCat 91 / ASI294MM
+   stack in R (1.07″/px, stars 4.4″): *Max boost* 1.5 made stars 7 % narrower for +31 %
+   background noise; *Max boost* 3 made them 10 % narrower for twice the noise.
 
 ### Telescopes in the list
 
@@ -106,8 +130,8 @@ half a percentage point; overwrite the field if you know your exact secondary si
 
 - Linear data only. On a stretched image the result is not physically meaningful.
 - Seeing-limited data from large apertures gains little: the atmosphere has already removed
-  the scales where the obstruction matters. Small obstructed astrographs and lunar /
-  planetary stacks gain the most.
+  the scales where the obstruction matters. Small telescopes with a large obstruction and
+  lunar / planetary stacks gain the most.
 - Spider-vane diffraction, seeing, collimation and aberrations are not corrected.
 - Background noise rises by the amount shown in the read-out; there is no noise-aware
   weighting yet.

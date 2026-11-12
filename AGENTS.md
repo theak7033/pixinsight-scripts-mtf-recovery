@@ -38,10 +38,28 @@ Full design, numbers, milestones and open questions: [PLAN.md](PLAN.md). Follow 
     and `win.copyAstrometricSolution( src )` carry them over (`copyMetadata`).
   - A typed focal length does not override a solution scale; the original image is untouched.
   - Install via Feature Scripts and discovery through the update repository URL both work.
+- 2026-11-12, v0.2.0: **Ideal aperture** mode (`MODE_IDEAL_APERTURE` = 2): Wiener-limited inverse of
+  the band-averaged obstructed MTF, `H = M(1+k)/(M^2+k)`, `k = wienerK( maxBoost )` so H never exceeds
+  Max boost; kernels get twice the room on oversampled data (`chooseKernelSize( c, mode )`).
+  Verified in PixInsight on synthetic white noise, RASA 8 at 1.938"/px, max boost 3: measured noise
+  R/G/B x1.405 / x1.317 / x1.262 vs kernel prediction x1.406 / x1.318 / x1.263; read-out x1.71, +32 %.
+- 2026-11-12, v0.2.0: **refractors** — obstruction may be 0 (control range 0-70 %). With 0 %,
+  restore-only / true-equivalent do nothing, so `main()` logs "Nothing to do" and the read-out
+  points to the Ideal aperture mode; ideal mode inverts the clear MTF. Verified in PixInsight on
+  synthetic noise, 80 mm, 0 %, 1.616"/px, max boost 3: measured noise R/G/B x1.898 / x1.673 /
+  x1.534 vs prediction x1.899 / x1.673 / x1.536. The OPTICS list still has no refractors (the
+  owner's unobstructed rows were left out); refractors use Custom.
+- 2026-11-12, v0.2.0 dialog: **Optics** combo (`OPTICS_OBSTRUCTED` / `OPTICS_REFRACTOR`, setting
+  `opticsType`). Refractor hides the telescope row, obstruction and mode (`visible = false`, then
+  `adjustToContents()`; verified to work in PixInsight) and forces eps 0 + diffraction removal.
+  Mode items are `MODE_ITEMS` (plain names); `modeDescription()` text sits under the combo and
+  changes with it; Max boost is shown only for diffraction removal. Log names via `modeName()`.
+  Real RedCat 91 / ASI294MM R stack (1.066"/px, stars 4.43"): max boost 1.5 -> FWHM 4.12",
+  MAD x1.31; max boost 3 -> FWHM 4.00", MAD x2.08 (seeing-limited: diffraction ~1.5").
 - Still not run inside PixInsight: in-place mode with a mask, mono images, *True equivalent*
   mode, installing the package through Check for Updates (restart), a visual check of the result.
 - Not built yet (PLAN.md milestones 6–7): noise-aware weighting, MTF plot, in-PixInsight
-  synthetic test script, update-repository manifest.
+  synthetic test script. The update repository (`repository/`, served from `main`) exists.
 
 - The `OPTICS` table (telescope drop-down) holds the 12 obstructed optics from the owner's
   spreadsheet. Never add entries from memory or the web without the owner's say-so; only

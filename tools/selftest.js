@@ -72,7 +72,9 @@ var M = ( new Function( block +
    + " MODE_RESTORE_ONLY: MODE_RESTORE_ONLY, MODE_TRUE_EQUIVALENT: MODE_TRUE_EQUIVALENT,"
    + " bandStats: bandStats, fft1d: fft1d, fft2d: fft2d, chooseKernelSize: chooseKernelSize,"
    + " buildKernel: buildKernel, kernelResponse: kernelResponse,"
-   + " kernelNoiseGain: kernelNoiseGain };" ) )();
+   + " kernelNoiseGain: kernelNoiseGain, MODE_IDEAL_APERTURE: MODE_IDEAL_APERTURE,"
+   + " DEFAULT_MAX_BOOST: DEFAULT_MAX_BOOST, wienerK: wienerK, idealGainAt: idealGainAt,"
+   + " modeGainAt: modeGainAt };" ) )();
 
 // ---- 3. tests --------------------------------------------------------------
 out( "== lensArea ==" );
@@ -181,6 +183,52 @@ var st = M.bandStats( [ 1 / ( 2 * 0.37 ) ], 0.35, M.MODE_TRUE_EQUIVALENT, 1 );
 check( "noise gain, Nyquist at 0.37 of cutoff, eps .35 ~ 1.347", st.noise, 1.347, 0.01 );
 check( "peak gain in that band ~ 1.51", st.peak, 1.508, 0.01 );
 
+out( "== ideal-aperture gain (Wiener-limited diffraction inverse) ==" );
+[ 1.5, 2, 3, 6 ].forEach( function( G ) {
+   var k = M.wienerK( G );
+   check( "wienerK(" + G + "): peak (1+k)/(2 sqrt k) = max boost", ( 1 + k ) / ( 2 * Math.sqrt( k ) ), G, 1e-12 );
+} );
+check( "wienerK(<=1) -> k = 1 (no boost anywhere)", M.wienerK( 0.5 ), 1, 1e-12 );
+check( "ideal gain is 1 at f = 0", M.idealGainAt( 0, [ 1 ], 0.35, M.wienerK( 3 ) ), 1 );
+check( "unlimited (k = 0) = 1 / MTF_obstructed", M.idealGainAt( 0.3, [ 1 ], 0.35, 0 ), 1 / M.mtfAnnular( 0.3, 0.35 ), 1e-12 );
+check( "unlimited beyond the cutoff stays finite (1)", M.idealGainAt( 1.5, [ 1 ], 0.35, 0 ), 1 );
+check( "limited beyond the cutoff falls to 0", M.idealGainAt( 1.5, [ 1 ], 0.35, M.wienerK( 3 ) ), 0, 1e-12 );
+( function() {
+   var k = M.wienerK( 3 ), worst = 0;
+   for ( var i = 1; i < 400; ++i ) worst = Math.max( worst, M.idealGainAt( i / 400, [ 1 ], 0.46, k ) );
+   check( "never above max boost, eps .46, whole band", worst <= 3 + 1e-12, true );
+} )();
+check( "ideal >= clear/obstructed ratio inside the band (it also undoes clear diffraction)",
+       M.idealGainAt( 0.2, [ 1 ], 0.46, M.wienerK( 3 ) ) > M.gainAt( 0.2, [ 1 ], 0.46 ), true );
+check( "refractor (eps 0): ideal gain = 1 / clear MTF", M.idealGainAt( 0.3, [ 1 ], 0, 0 ), 1 / M.mtfClear( 0.3 ), 1e-12 );
+( function() {
+   var c = M.bandCutoffs( M.bandById( "G" ), 80, M.imageScaleArcsec( 480, 3.76 ) );   // 80 mm f/6, 3.76 um
+   var r = M.bandStats( c, 0, M.MODE_RESTORE_ONLY, 1 ), t = M.bandStats( c, 0, M.MODE_TRUE_EQUIVALENT, 1 );
+   var i = M.bandStats( c, 0, M.MODE_IDEAL_APERTURE, 1, 3 );
+   check( "refractor: restore-only does nothing", [ r.peak, r.noise ].join( "," ), "1,1" );
+   check( "refractor: true equivalent does nothing", [ t.peak, t.noise ].join( "," ), "1,1" );
+   out( "  INFO  80 mm f/6 refractor, 3.76 um (" + M.imageScaleArcsec( 480, 3.76 ).toFixed( 3 ) + "\"/px), G, ideal x3: peak x"
+        + i.peak.toFixed( 3 ) + "  noise x" + i.noise.toFixed( 3 ) + "  (Nyquist at " + ( 50 / c[1] ).toFixed( 0 ) + " % of cutoff)" );
+   check( "refractor: ideal aperture boosts", i.peak > 1.5 && i.noise > 1, true );
+} )();
+check( "polychromatic: inverse of the band-averaged MTF",
+       M.idealGainAt( 0.3, [ 0.9, 1.1 ], 0.35, 0 ),
+       2 / ( M.mtfAnnular( 0.3 / 0.9, 0.35 ) + M.mtfAnnular( 0.3 / 1.1, 0.35 ) ), 1e-12 );
+check( "modeGainAt, ideal, amount 0.5 halves the boost",
+       M.modeGainAt( 0.3, [ 1 ], 0.35, M.MODE_IDEAL_APERTURE, 0.5, 0 ), 1 + 0.5 * ( 1 / M.mtfAnnular( 0.3, 0.35 ) - 1 ), 1e-12 );
+check( "modeGainAt, other modes = shapedGain( gainAt )",
+       M.modeGainAt( 0.3, [ 1 ], 0.35, M.MODE_RESTORE_ONLY, 1, 0 ), M.shapedGain( M.gainAt( 0.3, [ 1 ], 0.35 ), M.MODE_RESTORE_ONLY, 1 ), 1e-12 );
+( function() {
+   // owner's RASA 8, 1.938"/px, green: restore-only vs ideal aperture (max boost 3)
+   var c = M.bandCutoffs( M.bandById( "G" ), 203, 1.938 );
+   var r = M.bandStats( c, 0.458, M.MODE_RESTORE_ONLY, 1 ), i = M.bandStats( c, 0.458, M.MODE_IDEAL_APERTURE, 1, 3 );
+   out( "  INFO  RASA 8 @1.938\"/px, G: restore only peak x" + r.peak.toFixed( 3 ) + " noise x" + r.noise.toFixed( 3 )
+        + "  |  ideal (max x3) peak x" + i.peak.toFixed( 3 ) + " noise x" + i.noise.toFixed( 3 ) );
+   check( "ideal mode boosts more than restore-only", i.peak > r.peak && i.noise > r.noise, true );
+   check( "bandStats default max boost = DEFAULT_MAX_BOOST",
+          M.bandStats( c, 0.458, M.MODE_IDEAL_APERTURE, 1 ).peak, i.peak, 1e-12 );
+} )();
+
 out( "== FFT ==" );
 ( function() {
    var n = 16, re = new Float64Array( n ), im = new Float64Array( n ), keep = [];
@@ -203,9 +251,12 @@ out( "== FFT ==" );
 out( "== correction kernel ==" );
 check( "kernel size is odd and clamped (coarse)", M.chooseKernelSize( 3.4 ), 49 );
 check( "kernel size clamped (fine)", M.chooseKernelSize( 0.05 ), 255 );
-function kernelCase( name, cutoffs, eps, mode ) {
-   var size = M.chooseKernelSize( Math.min.apply( null, cutoffs ) );
-   var k = M.buildKernel( cutoffs, eps, mode, 1, size );
+check( "ideal mode: same floor when undersampled", M.chooseKernelSize( 3.4, M.MODE_IDEAL_APERTURE ), 49 );
+check( "ideal mode: twice the room when oversampled", M.chooseKernelSize( 0.572, M.MODE_IDEAL_APERTURE ), 2 * Math.ceil( 48 / 0.572 ) + 1 );
+function kernelCase( name, cutoffs, eps, mode, maxBoost ) {
+   var size = M.chooseKernelSize( Math.min.apply( null, cutoffs ), mode );
+   var k = M.buildKernel( cutoffs, eps, mode, 1, size, maxBoost );
+   var wk = M.wienerK( maxBoost === undefined ? M.DEFAULT_MAX_BOOST : maxBoost );
    var s = 0, asym = 0, c = ( size - 1 ) / 2;
    for ( var i = 0; i < k.data.length; ++i ) s += k.data[i];
    for ( var y = 0; y < size; ++y )
@@ -214,15 +265,15 @@ function kernelCase( name, cutoffs, eps, mode ) {
    var worst = 0;
    for ( var j = 1; j <= 50; ++j ) {
       var f = j / 100;
-      var want = M.shapedGain( M.gainAt( f, cutoffs, eps ), mode, 1 );
-      worst = Math.max( worst, Math.abs( M.kernelResponse( k, f ) - want ) );
+      var want = M.modeGainAt( f, cutoffs, eps, mode, 1, wk );
+      worst = Math.max( worst, Math.abs( M.kernelResponse( k, f ) - want ) / want );
    }
    out( "  INFO  " + name + ": size " + size + ", centre " + k.data[c*size+c].toFixed( 4 )
-        + ", worst response error " + worst.toFixed( 5 )
+        + ", worst relative response error " + worst.toFixed( 5 )
         + ", noise gain " + M.kernelNoiseGain( k ).toFixed( 4 ) );
    check( name + ": sum = 1", s, 1, 1e-12 );
    check( name + ": point-symmetric", asym, 0, 1e-12 );
-   check( name + ": response within 0.01 of the target gain", worst < 0.01, true );
+   check( name + ": response within 1 % of the target gain", worst < 0.01, true );
    return k;
 }
 var kq = kernelCase( "f/5 Newtonian 35%, true mode", [ 1 / ( 2 * 0.37 ) ], 0.35, M.MODE_TRUE_EQUIVALENT );
@@ -232,6 +283,12 @@ kernelCase( "RASA 8 46%, restore only, L band",
 kernelCase( "EdgeHD 8 34%, restore only, Ha",
             M.bandCutoffs( M.bandById( "Ha" ), 203, M.imageScaleArcsec( 2032, 3.76 ) ), 0.339, M.MODE_RESTORE_ONLY );
 kernelCase( "oversampled planetary 34%, true mode", [ 0.26 ], 0.34, M.MODE_TRUE_EQUIVALENT );
+kernelCase( "RASA 8 46%, ideal aperture x3, G band",
+            M.bandCutoffs( M.bandById( "G" ), 203, 1.938 ), 0.458, M.MODE_IDEAL_APERTURE, 3 );
+kernelCase( "80 mm f/6 refractor, ideal aperture x3, G band",
+            M.bandCutoffs( M.bandById( "G" ), 80, M.imageScaleArcsec( 480, 3.76 ) ), 0, M.MODE_IDEAL_APERTURE, 3 );
+kernelCase( "EdgeHD 8 34%, ideal aperture x6, Ha",
+            M.bandCutoffs( M.bandById( "Ha" ), 203, M.imageScaleArcsec( 2032, 3.76 ) ), 0.339, M.MODE_IDEAL_APERTURE, 6 );
 
 out( "" );
 out( failures === 0 ? "ALL TESTS PASSED" : ( failures + " TEST(S) FAILED" ) );

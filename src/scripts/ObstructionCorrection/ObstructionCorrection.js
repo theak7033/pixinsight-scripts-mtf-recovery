@@ -1,6 +1,6 @@
 #engine v8
 // ============================================================
-// ObstructionCorrection.js — PixInsight Script  v0.1.1
+// ObstructionCorrection.js — PixInsight Script  v0.2.0
 //
 // Restores the contrast a telescope's central obstruction removes at
 // medium spatial frequencies, by filtering a LINEAR image with
@@ -202,15 +202,53 @@ function shapedGain( H, mode, amount ) {
    return 1 + amount * ( H - 1 );
 }
 
+// mode 2 = "ideal aperture": also undo the diffraction of the clear
+// aperture, i.e. invert the obstructed MTF M itself, not just the ratio.
+// A plain 1/M explodes where M -> 0, so it is Wiener-limited:
+//     H = M (1 + k) / (M^2 + k)
+// H(0) = 1, H -> 1/M for k -> 0, and H never exceeds (1 + k) / (2 sqrt k),
+// reached at M = sqrt k. Beyond the cutoff (M = 0) H falls to 0.
+var MODE_IDEAL_APERTURE = 2;
+var DEFAULT_MAX_BOOST = 3.0;
+
+// Wiener constant k whose largest possible gain is exactly maxBoost.
+// (1 + s^2) / (2 s) = G  ->  s = G - sqrt( G^2 - 1 ),  k = s^2.
+function wienerK( maxBoost ) {
+   let G = ( maxBoost > 1 ) ? maxBoost : 1;
+   let s = G - Math.sqrt( G*G - 1 );
+   return s * s;
+}
+
+// Polychromatic ideal-aperture gain at pixel frequency f: Wiener inverse of
+// the band-averaged obstructed MTF.
+function idealGainAt( f, cutoffs, eps, k ) {
+   if ( f <= 0 ) return 1;
+   let m = 0;
+   for ( let i = 0; i < cutoffs.length; ++i )
+      m += mtfAnnular( f / cutoffs[i], eps );
+   m /= cutoffs.length;
+   if ( !( k > 0 ) ) return m > 1e-12 ? 1 / m : 1;   // unlimited: only for tests
+   return m * ( 1 + k ) / ( m*m + k );
+}
+
+// Final gain at frequency f for any mode; k = wienerK( maxBoost ).
+function modeGainAt( f, cutoffs, eps, mode, amount, k ) {
+   if ( mode === MODE_IDEAL_APERTURE )
+      return 1 + amount * ( idealGainAt( f, cutoffs, eps, k ) - 1 );
+   return shapedGain( gainAt( f, cutoffs, eps ), mode, amount );
+}
+
 // Peak gain inside the sampled band and the white-noise sigma gain
 // (root mean square of the gain over the whole frequency square).
-function bandStats( cutoffs, eps, mode, amount ) {
+// maxBoost is used by the ideal-aperture mode only.
+function bandStats( cutoffs, eps, mode, amount, maxBoost ) {
    let n = 96, peak = 1, acc = 0;
+   let k = wienerK( maxBoost === undefined ? DEFAULT_MAX_BOOST : maxBoost );
    for ( let iy = 0; iy < n; ++iy ) {
       let fy = ( iy + 0.5 ) / n * 0.5;
       for ( let ix = 0; ix < n; ++ix ) {
          let fx = ( ix + 0.5 ) / n * 0.5;
-         let h = shapedGain( gainAt( Math.sqrt( fx*fx + fy*fy ), cutoffs, eps ), mode, amount );
+         let h = modeGainAt( Math.sqrt( fx*fx + fy*fy ), cutoffs, eps, mode, amount, k );
          if ( h > peak ) peak = h;
          acc += h*h;
       }
@@ -266,8 +304,11 @@ function fft2d( re, im, n, inverse ) {
 
 // Odd kernel size for a given (smallest) cutoff in cycles/px: the kernel
 // structure is about 1/cutoff pixels wide, the 1/r^3 tail needs room.
-function chooseKernelSize( minCutoff ) {
-   let half = Math.ceil( 24 / Math.max( minCutoff, 0.02 ) );
+// The ideal-aperture gain peaks and falls steeply near the cutoff, so on
+// oversampled data it needs twice the room to stay within 1 %.
+function chooseKernelSize( minCutoff, mode ) {
+   let room = ( mode === MODE_IDEAL_APERTURE ) ? 48 : 24;
+   let half = Math.ceil( room / Math.max( minCutoff, 0.02 ) );
    half = Math.min( 127, Math.max( 24, half ) );
    return 2 * half + 1;
 }
@@ -275,14 +316,15 @@ function chooseKernelSize( minCutoff ) {
 // Correction kernel: inverse FFT of the shaped gain sampled on a 512 x 512
 // frequency grid, cropped to size x size (odd), edge-tapered, sum = 1.
 // Returns { size, data } with data row-major, centre at (size-1)/2.
-function buildKernel( cutoffs, eps, mode, amount, size ) {
+function buildKernel( cutoffs, eps, mode, amount, size, maxBoost ) {
    let n = 512, half = ( size - 1 ) >> 1;
    let re = new Float64Array( n*n ), im = new Float64Array( n*n );
+   let k = wienerK( maxBoost === undefined ? DEFAULT_MAX_BOOST : maxBoost );
    for ( let y = 0; y < n; ++y ) {
       let fy = ( y < n/2 ? y : y - n ) / n;
       for ( let x = 0; x < n; ++x ) {
          let fx = ( x < n/2 ? x : x - n ) / n;
-         re[y*n+x] = shapedGain( gainAt( Math.sqrt( fx*fx + fy*fy ), cutoffs, eps ), mode, amount );
+         re[y*n+x] = modeGainAt( Math.sqrt( fx*fx + fy*fy ), cutoffs, eps, mode, amount, k );
       }
    }
    fft2d( re, im, n, true );
@@ -325,7 +367,7 @@ function kernelNoiseGain( kernel ) {
 // ============================================================
 //  CONFIGURATION — internals; user-facing parameters live in the dialog
 // ============================================================
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
 const SETTINGS_KEY = "ObstructionCorrection/";
 
 const DEFAULT_APERTURE_MM     = 200;
@@ -452,6 +494,46 @@ function detectImageScale( view ) {
 }
 
 // ============================================================
+//  Optics type and mode texts shown in the dialog and the log
+// ============================================================
+var OPTICS_OBSTRUCTED = 0;      // reflector, SCT, RASA: has a central obstruction
+var OPTICS_REFRACTOR  = 1;      // no obstruction: only diffraction removal makes sense
+
+var MODE_ITEMS = [              // combo items, in MODE_* order
+   "Restore obstruction loss (recommended)",
+   "Exact unobstructed equivalent",
+   "Remove all diffraction (experimental)"
+];
+
+// Short name for the log.
+function modeName( mode, refractor ) {
+   if ( refractor ) return "refractor: remove diffraction";
+   if ( mode === MODE_IDEAL_APERTURE ) return "remove all diffraction";
+   if ( mode === MODE_TRUE_EQUIVALENT ) return "exact unobstructed equivalent";
+   return "restore obstruction loss";
+}
+
+// What the selected mode does, in plain words, shown under the mode list.
+function modeDescription( mode, refractor ) {
+   if ( refractor )
+      return "<p><b>Refractor:</b> there is no obstruction to correct, so the script removes the " +
+             "blur of the lens's own diffraction, as if the aperture were perfect. Experimental: it " +
+             "raises the noise, most where seeing has already erased the detail. <i>Max boost</i> caps " +
+             "the strongest boost; 1.5-2 is a good start for seeing-limited data.</p>";
+   if ( mode === MODE_IDEAL_APERTURE )
+      return "<p>Restores the obstruction loss <b>and</b> removes the aperture's own diffraction blur: " +
+             "sharper than an unobstructed telescope of the same size. Experimental: much more noise. " +
+             "<i>Max boost</i> caps the strongest boost.</p>";
+   if ( mode === MODE_TRUE_EQUIVALENT )
+      return "<p>Makes the image exactly what an unobstructed telescope of the same aperture would " +
+             "give: restores the lost medium-scale contrast and also takes away the slight extra " +
+             "fine-detail contrast an obstructed telescope has.</p>";
+   return "<p>Gives back the medium-scale contrast that the secondary mirror takes away, up to what " +
+          "an unobstructed telescope (like a refractor) of the same aperture would show. Never " +
+          "lowers contrast anywhere, adds the least noise.</p>";
+}
+
+// ============================================================
 //  Dialog
 // ============================================================
 var ObstructionCorrectionDialog = class extends Dialog {
@@ -502,7 +584,8 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.helpLabel.text =
          "<p><b>ObstructionCorrection</b> — restores the medium-scale contrast that a " +
          "telescope's central obstruction removes. Apply to <b>linear</b> data " +
-         "(before any stretch), ideally before noise reduction.</p>";
+         "(before any stretch), ideally before noise reduction. For a refractor choose " +
+         "<b>Optics: Refractor</b>.</p>";
 
       // ---- target --------------------------------------------------------
       this.viewList = new ViewList( this );
@@ -511,7 +594,16 @@ var ObstructionCorrectionDialog = class extends Dialog {
          this.viewList.currentView = ImageWindow.activeWindow.mainView;
       this.viewList.onViewSelected = function( view ) { self.detectScale(); self.updateReadout(); };
 
-      // ---- telescope -----------------------------------------------------
+      // ---- optics --------------------------------------------------------
+      this.opticsTypeCombo = new ComboBox( this );
+      this.opticsTypeCombo.addItem( "With central obstruction (reflector, SCT, RASA)" );
+      this.opticsTypeCombo.addItem( "Refractor (no obstruction)" );
+      this.opticsTypeCombo.toolTip =
+         "<p>With a central obstruction the script restores the contrast the secondary mirror removes.</p>" +
+         "<p>A refractor has nothing to restore; the script then removes the lens's own diffraction blur " +
+         "(experimental), and the obstruction and mode settings are hidden.</p>";
+      this.opticsTypeCombo.onItemSelected = function() { self.updateOpticsControls(); self.updateReadout(); };
+
       this.telescopeCombo = new ComboBox( this );
       this.telescopeCombo.addItem( "Custom (enter values below)" );
       for ( let i = 0; i < this.optics.length; ++i )
@@ -523,8 +615,9 @@ var ObstructionCorrectionDialog = class extends Dialog {
 
       this.aperture = makeNumeric( "Aperture (mm):", 20, 1000, 0, DEFAULT_APERTURE_MM,
          "Clear aperture diameter.", function() { self.markCustom(); self.updateReadout(); } );
-      this.obstruction = makeNumeric( "Obstruction (%):", 1, 70, 1, DEFAULT_OBSTRUCTION_PCT,
-         "Linear central obstruction: secondary (or its baffle) diameter as a percentage of the aperture diameter.",
+      this.obstruction = makeNumeric( "Obstruction (%):", 0, 70, 1, DEFAULT_OBSTRUCTION_PCT,
+         "Linear central obstruction: secondary (or its baffle) diameter as a percentage of the aperture diameter. " +
+         "For a refractor choose Optics: Refractor instead.",
          function() { self.markCustom(); self.updateReadout(); } );
       this.focal = makeNumeric( "Focal length (mm):", 50, 6000, 0, DEFAULT_FOCAL_MM,
          "Effective focal length, including any reducer or Barlow. Only used to derive the image scale.",
@@ -539,12 +632,19 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.scaleSource = new Label( this );
       this.scaleSource.text = "";
 
+      this.telescopeLabel = makeLabel( "Telescope:" );
+      let telescopeRow = new HorizontalSizer;
+      telescopeRow.spacing = 4;
+      telescopeRow.add( this.telescopeLabel );
+      telescopeRow.add( this.telescopeCombo, 100 );
+
       this.telescopeGroup = new GroupBox( this );
-      this.telescopeGroup.title = "Telescope";
+      this.telescopeGroup.title = "Optics";
       this.telescopeGroup.sizer = new VerticalSizer;
       this.telescopeGroup.sizer.margin = 6;
       this.telescopeGroup.sizer.spacing = 4;
-      this.telescopeGroup.sizer.add( makeRow( "Telescope:", this.telescopeCombo ) );
+      this.telescopeGroup.sizer.add( makeRow( "Optics:", this.opticsTypeCombo ) );
+      this.telescopeGroup.sizer.add( telescopeRow );
       this.telescopeGroup.sizer.add( this.aperture );
       this.telescopeGroup.sizer.add( this.obstruction );
       this.telescopeGroup.sizer.add( this.focal );
@@ -561,15 +661,31 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.bandCombo.onItemSelected = function() { self.updateReadout(); };
 
       this.modeCombo = new ComboBox( this );
-      this.modeCombo.addItem( "Restore only (never reduce contrast)" );
-      this.modeCombo.addItem( "True unobstructed-aperture equivalent" );
-      this.modeCombo.toolTip =
-         "An obstructed aperture has slightly MORE contrast than a clear one at the finest scales. " +
-         "'Restore only' leaves that alone; 'True equivalent' also lowers it to the clear-aperture value.";
-      this.modeCombo.onItemSelected = function() { self.updateReadout(); };
+      for ( let i = 0; i < MODE_ITEMS.length; ++i )
+         this.modeCombo.addItem( MODE_ITEMS[i] );
+      this.modeCombo.toolTip = "What the correction aims for; the text below the list explains the selected mode.";
+      this.modeCombo.onItemSelected = function() { self.updateModeControls(); self.updateReadout(); };
+      this.modeLabel = makeLabel( "Mode:" );
+      let modeRow = new HorizontalSizer;
+      modeRow.spacing = 4;
+      modeRow.add( this.modeLabel );
+      modeRow.add( this.modeCombo, 100 );
+
+      this.modeDescription = new Label( this );
+      this.modeDescription.wordWrapping = true;
+      this.modeDescription.useRichText = true;
+      this.modeDescription.text = "";
+      let descriptionRow = new HorizontalSizer;
+      descriptionRow.addSpacing( labelWidth + 4 );
+      descriptionRow.add( this.modeDescription, 100 );
 
       this.amount = makeNumeric( "Amount:", 0, 1, 2, DEFAULT_AMOUNT,
          "Strength of the correction. 1 = full physical correction, 0 = no change.",
+         function() { self.updateReadout(); } );
+
+      this.maxBoost = makeNumeric( "Max boost:", 1.5, 10, 2, DEFAULT_MAX_BOOST,
+         "Diffraction removal only: the contrast gain is never larger than this at any scale " +
+         "(Wiener limit). Higher = closer to a full diffraction inverse, and more noise.",
          function() { self.updateReadout(); } );
 
       this.protectBox = new CheckBox( this );
@@ -592,8 +708,10 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.correctionGroup.sizer.margin = 6;
       this.correctionGroup.sizer.spacing = 4;
       this.correctionGroup.sizer.add( makeRow( "Band:", this.bandCombo ) );
-      this.correctionGroup.sizer.add( makeRow( "Mode:", this.modeCombo ) );
+      this.correctionGroup.sizer.add( modeRow );
+      this.correctionGroup.sizer.add( descriptionRow );
       this.correctionGroup.sizer.add( this.amount );
+      this.correctionGroup.sizer.add( this.maxBoost );
       this.correctionGroup.sizer.add( this.protectBox );
       this.correctionGroup.sizer.add( this.satThreshold );
       this.correctionGroup.sizer.add( this.inPlaceBox );
@@ -630,10 +748,45 @@ var ObstructionCorrectionDialog = class extends Dialog {
 
       this.loadSettings();
       this.detectScale();
+      this.updateOpticsControls();
       this.updateReadout();
 
       this.adjustToContents();
       this.setMinWidth( 520 );
+   }
+
+   isRefractor() {
+      return this.opticsTypeCombo.currentItem === OPTICS_REFRACTOR;
+   }
+
+   // The mode actually used: a refractor can only have its diffraction removed.
+   effectiveMode() {
+      return this.isRefractor() ? MODE_IDEAL_APERTURE : this.modeFromCombo();
+   }
+
+   // Refractor: hide what does not apply (telescope list, obstruction, mode list).
+   updateOpticsControls() {
+      let shown = !this.isRefractor();
+      this.telescopeLabel.visible = shown;
+      this.telescopeCombo.visible = shown;
+      this.obstruction.visible = shown;
+      this.modeLabel.visible = shown;
+      this.modeCombo.visible = shown;
+      this.updateModeControls();
+      this.adjustToContents();
+   }
+
+   // Description of the mode in use; Max boost only where it applies.
+   updateModeControls() {
+      let mode = this.effectiveMode();
+      this.modeDescription.text = modeDescription( mode, this.isRefractor() );
+      this.maxBoost.visible = ( mode === MODE_IDEAL_APERTURE );
+   }
+
+   // Mode index of the combo (its items are in MODE_* order).
+   modeFromCombo() {
+      let i = this.modeCombo.currentItem;
+      return ( i === MODE_TRUE_EQUIVALENT || i === MODE_IDEAL_APERTURE ) ? i : MODE_RESTORE_ONLY;
    }
 
    // Telescope picked from the list: fill the optics fields. The catalogue
@@ -705,14 +858,17 @@ var ObstructionCorrectionDialog = class extends Dialog {
       return {
          view: view,
          isColor: isColor,
-         telescope: this.telescopeCombo.currentItem > 0
-            ? opticsLabel( this.optics[ this.telescopeCombo.currentItem - 1 ] ) : "custom",
+         refractor: this.isRefractor(),
+         telescope: this.isRefractor() ? "refractor"
+            : this.telescopeCombo.currentItem > 0
+               ? opticsLabel( this.optics[ this.telescopeCombo.currentItem - 1 ] ) : "custom",
          apertureMm: this.aperture.value,
-         eps: this.obstruction.value / 100,
+         eps: this.isRefractor() ? 0 : this.obstruction.value / 100,
          scale: this.scale.value,
          bands: this.bandIds( isColor ),
-         mode: this.modeCombo.currentItem === 1 ? MODE_TRUE_EQUIVALENT : MODE_RESTORE_ONLY,
+         mode: this.effectiveMode(),
          amount: this.amount.value,
+         maxBoost: this.maxBoost.value,
          protect: this.protectBox.checked,
          satThreshold: this.satThreshold.value,
          inPlace: this.inPlaceBox.checked
@@ -725,10 +881,12 @@ var ObstructionCorrectionDialog = class extends Dialog {
          let band = bandById( p.bands[ p.bands.length > 1 ? 1 : 0 ] );     // green for colour
          let cutoffs = bandCutoffs( band, p.apertureMm, p.scale );
          let mid = cutoffs[ cutoffs.length >> 1 ];
-         let st = bandStats( cutoffs, p.eps, p.mode, p.amount );
+         let st = bandStats( cutoffs, p.eps, p.mode, p.amount, p.maxBoost );
          let q = 0.5 / mid;
          let note = "";
-         if ( st.peak < 1.03 )
+         if ( !( p.eps > 0 ) && p.mode !== MODE_IDEAL_APERTURE )
+            note = "<br/><i>No obstruction entered: for a refractor choose Optics: Refractor.</i>";
+         else if ( st.peak < 1.03 )
             note = "<br/><i>Almost nothing to correct at this sampling.</i>";
          this.readout.text =
             "<p>Diffraction cutoff: <b>" + mid.toFixed( 2 ) + "</b> cycles/px" +
@@ -747,11 +905,14 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.focal.setValue( readSetting( "focal", DataType_Double, DEFAULT_FOCAL_MM ) );
       this.pixel.setValue( readSetting( "pixel", DataType_Double, DEFAULT_PIXEL_UM ) );
       this.amount.setValue( readSetting( "amount", DataType_Double, DEFAULT_AMOUNT ) );
+      this.maxBoost.setValue( readSetting( "maxBoost", DataType_Double, DEFAULT_MAX_BOOST ) );
       this.satThreshold.setValue( readSetting( "satThreshold", DataType_Double, DEFAULT_SAT_THRESHOLD ) );
       this.protectBox.checked = readSetting( "protect", DataType_Boolean, true );
       this.inPlaceBox.checked = readSetting( "inPlace", DataType_Boolean, false );
+      let opticsType = readSetting( "opticsType", DataType_Int32, OPTICS_OBSTRUCTED );
+      this.opticsTypeCombo.currentItem = ( opticsType === OPTICS_REFRACTOR ) ? OPTICS_REFRACTOR : OPTICS_OBSTRUCTED;
       let mode = readSetting( "mode", DataType_Int32, 0 );
-      this.modeCombo.currentItem = ( mode === 1 ) ? 1 : 0;
+      this.modeCombo.currentItem = ( mode === MODE_TRUE_EQUIVALENT || mode === MODE_IDEAL_APERTURE ) ? mode : MODE_RESTORE_ONLY;
       let band = readSetting( "band", DataType_Int32, 0 );
       this.bandCombo.currentItem = ( band >= 0 && band <= BANDS.length ) ? band : 0;
       // The telescope is remembered by maker + model, so a re-sorted or extended list still matches.
@@ -769,10 +930,12 @@ var ObstructionCorrectionDialog = class extends Dialog {
       writeSetting( "focal", DataType_Double, this.focal.value );
       writeSetting( "pixel", DataType_Double, this.pixel.value );
       writeSetting( "amount", DataType_Double, this.amount.value );
+      writeSetting( "maxBoost", DataType_Double, this.maxBoost.value );
       writeSetting( "satThreshold", DataType_Double, this.satThreshold.value );
       writeSetting( "protect", DataType_Boolean, this.protectBox.checked );
       writeSetting( "inPlace", DataType_Boolean, this.inPlaceBox.checked );
       writeSetting( "mode", DataType_Int32, this.modeCombo.currentItem );
+      writeSetting( "opticsType", DataType_Int32, this.opticsTypeCombo.currentItem );
       writeSetting( "band", DataType_Int32, this.bandCombo.currentItem );
       writeSetting( "telescope", DataType_String,
          this.telescopeCombo.currentItem > 0
@@ -880,9 +1043,9 @@ function applyCorrection( p ) {
          if ( kernelWins[ bandId ] )
             continue;
          let cutoffs = bandCutoffs( bandById( bandId ), p.apertureMm, p.scale );
-         let size = chooseKernelSize( Math.min.apply( null, cutoffs ) );
-         let kernel = buildKernel( cutoffs, p.eps, p.mode, p.amount, size );
-         let st = bandStats( cutoffs, p.eps, p.mode, p.amount );
+         let size = chooseKernelSize( Math.min.apply( null, cutoffs ), p.mode );
+         let kernel = buildKernel( cutoffs, p.eps, p.mode, p.amount, size, p.maxBoost );
+         let st = bandStats( cutoffs, p.eps, p.mode, p.amount, p.maxBoost );
          log( "Kernel " + bandId + "        : " + size + " x " + size + " px   cutoff "
               + cutoffs[ cutoffs.length >> 1 ].toFixed( 3 ) + " cycles/px   peak boost x"
               + st.peak.toFixed( 3 ) + "   noise x" + kernelNoiseGain( kernel ).toFixed( 3 ) );
@@ -984,8 +1147,14 @@ function main() {
       log( "ERROR: No target image selected. Open an image and pick it in the dialog." );
       return;
    }
-   if ( !( p.eps > 0 && p.eps < 1 ) || !( p.apertureMm > 0 ) || !( p.scale > 0 ) ) {
-      log( "ERROR: aperture, obstruction and image scale must all be positive." );
+   if ( !( p.eps >= 0 && p.eps < 1 ) || !( p.apertureMm > 0 ) || !( p.scale > 0 ) ) {
+      log( "ERROR: aperture, obstruction and image scale are out of range "
+           + "(aperture and scale must be positive, obstruction 0-99 %)." );
+      return;
+   }
+   if ( p.eps === 0 && p.mode !== MODE_IDEAL_APERTURE ) {
+      log( "Nothing to do: there is no central obstruction to correct. For a refractor choose "
+           + "Optics: Refractor, which removes the lens's own diffraction blur instead." );
       return;
    }
 
@@ -994,9 +1163,11 @@ function main() {
         + "  (" + ( p.isColor ? "RGB" : "mono" ) + ")" );
    log( "Telescope        : " + p.telescope );
    log( "Optics           : aperture " + p.apertureMm.toFixed( 0 ) + " mm   obstruction "
-        + ( 100 * p.eps ).toFixed( 1 ) + " %   scale " + p.scale.toFixed( 3 ) + " \"/px" );
+        + ( 100 * p.eps ).toFixed( 1 ) + " %" + ( p.eps === 0 ? " (clear aperture)" : "" )
+        + "   scale " + p.scale.toFixed( 3 ) + " \"/px" );
    log( "Correction       : bands " + p.bands.join( "/" ) + "   "
-        + ( p.mode === MODE_TRUE_EQUIVALENT ? "true equivalent" : "restore only" )
+        + modeName( p.mode, p.refractor )
+        + ( p.mode === MODE_IDEAL_APERTURE ? " (max boost x" + p.maxBoost.toFixed( 2 ) + ")" : "" )
         + "   amount " + p.amount.toFixed( 2 ) );
 
    try {

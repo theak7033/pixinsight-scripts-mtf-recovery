@@ -30,20 +30,24 @@
    </description>
 
    <platform os="all" arch="noarch" version="1.9.4:2.0.0">
-      <package fileName="ObstructionCorrection-0.1.1.zip"
-               sha1="452a1d3f532013ddf887ddf091f644ea6a502589"
+      <package fileName="ObstructionCorrection-0.2.0.zip"
+               sha1="3c6e54d03e3be20cfecf52176bbe7bc35e837997"
                type="script"
                releaseDate="20261112"
                installPrefix=""
                removeBeforeInstall="false">
-         <title>ObstructionCorrection 0.1.1</title>
+         <title>ObstructionCorrection 0.2.0</title>
          <description>
             <p>Installs Script &gt; Utilities &gt; ObstructionCorrection. Pick your
-            telescope from the list (12 obstructed astrographs and reflectors,
+            telescope from the list (12 telescopes with a central obstruction,
             or Custom); the image scale is read from the plate solution or the
             FITS FOCALLEN / XPIXSZ keywords. Works on linear RGB or mono data,
             per-channel bands, saturated-star protection, new image or in place
-            with undo. Requires PixInsight 1.9.4 or newer.</p>
+            with undo. New in 0.2.0: experimental Ideal aperture mode, which also
+            undoes the diffraction of the aperture itself (Wiener-limited by Max
+            boost), so it also works on refractors (Optics: Refractor). Clearer
+            dialog: plain mode names with a description of each. Requires
+            PixInsight 1.9.4 or newer.</p>
          </description>
       </package>
    </platform>
