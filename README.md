@@ -20,6 +20,45 @@ roadmap: [PLAN.md](PLAN.md).
 
 Requires PixInsight 1.9.4 or newer (V8 JavaScript engine).
 
+## Why it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/mtf-obstruction-dark.svg">
+  <img src="docs/images/mtf-obstruction.svg" width="1000" alt="Left: contrast transfer (MTF) of a telescope with no obstruction and with a 46% obstruction; the obstructed curve is lower at medium scales but never reaches zero below the diffraction cutoff. Right: the correction the script applies, the ratio of the two, peaking at 1.92.">
+</picture>
+
+A central obstruction does not remove any scale from the image; it only **lowers the
+contrast** of some of them. Starlight is incoherent, so the telescope's transfer function
+(MTF) is the autocorrelation of its aperture, and a ring still contains every point-to-point
+separation from zero up to the full diameter. The obstructed MTF therefore stays above zero
+all the way to the diffraction cutoff. What is weakened by a known factor, not lost, can be
+multiplied back, and that factor follows from the aperture's geometry alone
+(O'Neill 1956, "Transfer function for an annular aperture").
+
+For a 46 % obstruction (RASA 8), single wavelength:
+
+| Scale (fraction of the cutoff) | MTF, no obstruction | MTF, 46 % obstruction | Contrast left |
+| --- | --- | --- | --- |
+| 0.05 (largest structures) | 0.936 | 0.883 | 94 % |
+| 0.10 | 0.873 | 0.766 | 88 % |
+| 0.20 (pixel limit at 1.94″/px) | 0.747 | 0.537 | 72 % |
+| 0.36 (deepest loss) | 0.552 | 0.287 | 52 % |
+| 0.60 | 0.285 | 0.254 | 89 % |
+| 0.80 | 0.104 | 0.132 | 127 % |
+
+What this means in practice:
+
+- The gain sits in the **finest detail of the image**: filaments, dust-lane edges, small
+  galaxy structure a few pixels across. Large-scale glow hardly changes.
+- It is **not star deconvolution**. The script measures no PSF and does not undo seeing; it
+  restores only the loss that the obstruction is known to cause.
+- The formula is exact for diffraction-limited optics and an approximation for aberrated
+  ones. Seeing lowers both curves by the same factor, so the ratio still holds, but where
+  seeing has already erased the signal the filter mostly raises noise.
+- Nothing can be restored beyond the cutoff, with or without an obstruction.
+
+The figure is drawn from the script's own math: `node tools/plot-mtf.js`.
+
 ## Install
 
 Pick **one** of the two ways below. Using both puts ObstructionCorrection in the Script menu

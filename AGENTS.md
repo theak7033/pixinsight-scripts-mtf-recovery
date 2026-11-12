@@ -91,8 +91,11 @@ tools/smoketest.js       unit + end-to-end tests of the PixInsight-side code aga
                          fails if any named function or method is never entered
 tools/test.sh            runs selftest with Node, or macOS jsc when Node is absent
 tools/build-package.sh   zips src/scripts into repository/ and updates repository/updates.xri
+tools/plot-mtf.js        draws docs/images/mtf-obstruction{,-dark}.svg from the shipped math block
+                         (README "Why it works"); mtf-obstruction.png is a headless-Chrome render
+                         of the light SVG for chats and forums
 repository/              update repository served from main: package zip + updates.xri
-docs/images/             README screenshots
+docs/images/             README figures and screenshots
 ```
 
 ## Commands
