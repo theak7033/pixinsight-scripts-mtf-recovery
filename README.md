@@ -17,9 +17,36 @@ Requires PixInsight 1.9.4 or newer (V8 JavaScript engine).
 
 ## Install
 
-In PixInsight: **Script → Feature Scripts… → Add**, select this repository's `src/scripts`
-folder, **Done**. The script appears under **Script → Utilities → ObstructionCorrection**.
-Or run it once via **Script → Execute Script File…**.
+### 1. Get the files
+
+Clone the repository, or download it from GitHub (**Code → Download ZIP**) and unzip it:
+
+```bash
+git clone https://github.com/theak7033/pixinsight-scripts-mtf-recovery.git
+```
+
+On Windows, if you clone with git, keep the files' LF line endings: run
+`git config core.autocrlf false` in the clone, then `git checkout -- .` (the script itself
+runs either way; the tests need LF).
+
+### 2. Add it to PixInsight's Script menu (recommended)
+
+1. In PixInsight, open **Script → Feature Scripts…**.
+2. Click **Add**.
+3. Select the repository's `src/scripts` folder, e.g.
+   `E:/scripts/pixinsight-scripts-mtf-recovery/src/scripts`, and click **Select Folder**.
+   PixInsight searches it and reports *1 additional script(s) were found*; click **OK**.
+4. Click **Done**.
+
+The script is now under **Script → Utilities → ObstructionCorrection**. PixInsight keeps
+pointing at this folder, so after an update (`git pull`, or a new ZIP unzipped over the old
+one) the menu entry runs the new version; no need to add it again. To remove it, untick it
+in **Script → Feature Scripts…** and click **Done**.
+
+### Or: run it once without installing
+
+**Script → Execute Script File…**, then pick
+`src/scripts/ObstructionCorrection/ObstructionCorrection.js`.
 
 ## Use
 
