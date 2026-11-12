@@ -4,3 +4,15 @@
 *.fit
 *.tif
 *.tiff
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Node (optional, only for tools/selftest.js)
+node_modules/
+npm-debug.log*
+
+# Local agent state
+.claude/
