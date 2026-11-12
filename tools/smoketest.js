@@ -58,7 +58,7 @@ var EXPORTS = [
    "keywordDict", "mat22", "detectImageScale", "createKernelWindow", "pixelMathToNewGray",
    "convolveWithKernel", "gaussianBlur", "applyCorrection", "main", "log",
    "ObstructionCorrectionDialog", "buildKernel", "obstructionGain", "kernelResponse",
-   "imageScaleArcsec", "opticsLabel", "obstructedOptics", "OPTICS", "BANDS",
+   "imageScaleArcsec", "opticsLabel", "opticsKey", "obstructedOptics", "OPTICS", "BANDS",
    "MODE_RESTORE_ONLY", "MODE_TRUE_EQUIVALENT"
 ];
 
@@ -142,7 +142,12 @@ function runScript( opts ) {
 
    function processClass( kind ) {
       var C = function() {};
-      C.prototype = { Image: 2, Parametric: 0, Gray: 1, SameAsTarget: 0, f32: 4 };
+      // Under V8 (PixInsight 1.9.4) process enums live on the CONSTRUCTOR;
+      // the prototype has none (PixelMath.prototype.Gray is undefined).
+      // PixelMath values verified in PixInsight 1.9.4: SameAsTarget 0, RGB 1, Gray 2, f32 4.
+      C.SameAsTarget = 0; C.RGB = 1; C.Gray = 2; C.f32 = 4;
+      C.Parametric = 0; C.Library = 1; C.Image = 2;
+      C.prototype = {};
       C.prototype.executeOn = function( view ) {
          R.procs.push( this );
          R.calls.push( kind + " on " + view.id + ( this.expression ? "  expr: " + this.expression : "" )
@@ -179,7 +184,11 @@ function runScript( opts ) {
                   },
                   write: function( k, t, v ) {
                      if ( opts.settingsThrow ) throw "settings unavailable";
-                     R.store[k] = v;
+                     // Like PixInsight 1.9.4: strings are stored 8-bit, so a
+                     // character above U+00FF comes back as its low byte.
+                     R.store[k] = ( typeof v === "string" )
+                        ? v.replace( /[^ -ÿ]/g, function( c ) { return String.fromCharCode( c.charCodeAt( 0 ) & 0xFF ); } )
+                        : v;
                   } },
       View: { viewById: function( id ) { return R.views[id] ? R.views[id].mainView : null; } },
       ImageWindow: ImageWindow, Dialog: Dialog, NumericControl: NumericControl,
@@ -239,7 +248,7 @@ out( "== end to end: mono, defaults, new image ==" );
    var write = R.procs[4], extract = R.procs[0];
    eq( "result is clipped to [0,1], not rescaled", [ write.truncate, write.rescale, write.truncateLower, write.truncateUpper ], [ true, false, 0, 1 ] );
    eq( "result is 32-bit float in the target's colour space", [ write.newImageSampleFormat, write.newImageColorSpace, write.showNewImage ], [ 4, 0, true ] );
-   eq( "channel copy is neither clipped nor rescaled, hidden, gray", [ extract.truncate, extract.rescale, extract.showNewImage, extract.newImageColorSpace ], [ false, false, false, 1 ] );
+   eq( "channel copy is neither clipped nor rescaled, hidden, gray", [ extract.truncate, extract.rescale, extract.showNewImage, extract.newImageColorSpace ], [ false, false, false, 2 ] );
    eq( "kernel convolution uses Image mode", R.procs[1].mode, 2 );
    eq( "star-mask blur is a 4 px Gaussian", [ R.procs[3].mode, R.procs[3].sigma, R.procs[3].shape ], [ 0, 4, 2 ] );
    eq( "temporary windows are closed", R.temps(), [] );
@@ -273,7 +282,7 @@ out( "== end to end: RGB, RASA 8 from the list, plate-solved, in place, masked, 
    check( "in-place result reported", R.has( /Result\s+: target\s+\(replaced/ ) );
    check( "the user's mask is enabled again", R.target.maskEnabled === true );
    eq( "temporary windows are closed", R.temps(), [] );
-   check( "telescope remembered by label", /RASA 8/.test( R.store[ KEY + "telescope" ] ) );
+   eq( "telescope remembered by maker + model", R.store[ KEY + "telescope" ], "Celestron RASA 8" );
 } )();
 
 out( "== end to end: mono narrowband, true mode, no protection, FITS scale ==" );
@@ -575,16 +584,19 @@ out( "== dialog ==" );
    d.pixel.setValue( 7.52 ); d.pixel.onValueUpdated( 7.52 );
    near( "editing the pixel size updates the scale", d.scale.value, X.imageScaleArcsec( 1000, 7.52 ), 1e-9 );
    d.scale.setValue( 2.5 ); d.scale.onValueUpdated( 2.5 );
-   check( "typing a scale marks it manual", /entered manually/.test( d.scaleSource.text ) && d.scaleLocked === false );
+   check( "typing a scale marks it manual", /entered manually/.test( d.scaleSource.text ) && d.scaleOrigin === "" );
 
-   // scale lock
-   d.scaleLocked = true;
+   // scale origin
+   d.scaleOrigin = "solution";
    d.scale.setValue( 1.234 );
    d.scaleFromOptics();
    eq( "a plate-solved scale is not overwritten by the optics", d.scale.value, 1.234 );
-   d.scaleLocked = false;
+   d.focal.setValue( 500 ); d.focal.onValueUpdated( 500 );
+   eq( "nor by a typed focal length", [ d.scale.value, d.scaleOrigin ], [ 1.234, "solution" ] );
+   d.focal.setValue( 1000 );
+   d.scaleOrigin = "";
    d.scaleFromOptics();
-   near( "unlocked: scale follows the optics", d.scale.value, X.imageScaleArcsec( 1000, 7.52 ), 1e-9 );
+   near( "no image scale: scale follows the optics", d.scale.value, X.imageScaleArcsec( 1000, 7.52 ), 1e-9 );
 
    // bands / parameters
    d.bandCombo.currentItem = 0;
@@ -629,14 +641,29 @@ out( "== dialog ==" );
    var ds = new S.x.ObstructionCorrectionDialog();
    check( "active image picked up", ds.viewList.currentView === S.target.mainView );
    near( "solved image: scale from the solution", ds.scale.value, 1.8, 1e-9 );
-   check( "solved image: scale locked", ds.scaleLocked === true && /astrometric solution/.test( ds.scaleSource.text ) );
+   check( "solved image: scale locked", ds.scaleOrigin === "solution" && /astrometric solution/.test( ds.scaleSource.text ) );
    eq( "pixel size taken from XPIXSZ", ds.pixel.value, 2.9 );
-   ds.scale.setValue( 9 ); ds.scaleLocked = false;
+   ds.scale.setValue( 9 ); ds.scaleOrigin = "";
    ds.viewList.onViewSelected( S.target.mainView );
    near( "selecting a view re-reads its scale", ds.scale.value, 1.8, 1e-9 );
    ds.viewList.currentView = null;
    ds.detectScale();
-   check( "no view: falls back to the optics and unlocks", ds.scaleLocked === false && /focal length and pixel size/.test( ds.scaleSource.text ) );
+   check( "no view: falls back to the optics and unlocks", ds.scaleOrigin === "" && /focal length and pixel size/.test( ds.scaleSource.text ) );
+
+   // FITS keywords (as on the owner's RASA 8 stack: FOCALLEN 400, XPIXSZ 3.76)
+   var F = runScript( { cancel: true, keywords: [ { name: "FOCALLEN", value: "400" }, { name: "XPIXSZ", value: "3.76" } ] } );
+   var df = new F.x.ObstructionCorrectionDialog();
+   eq( "FITS: focal length and pixel size fill the fields", [ df.focal.value, df.pixel.value, df.scaleOrigin ], [ 400, 3.76, "fits" ] );
+   near( "FITS: scale from the keywords", df.scale.value, F.x.imageScaleArcsec( 400, 3.76 ), 1e-9 );
+   var iR8 = df.telescopeCombo.items.findIndex( function( t ) { return /RASA 8/.test( t ); } );
+   df.telescopeCombo.currentItem = iR8; df.telescopeCombo.onItemSelected( iR8 );
+   eq( "FITS: picking a telescope fills aperture and obstruction ...", [ df.aperture.value, Math.round( df.obstruction.value ) ], [ 203, 46 ] );
+   eq( "... but keeps the image's focal length and scale", [ df.focal.value, df.scaleOrigin ], [ 400, "fits" ] );
+   near( "... scale unchanged", df.scale.value, F.x.imageScaleArcsec( 400, 3.76 ), 1e-9 );
+   check( "... and the source still says FITS", /FITS keywords/.test( df.scaleSource.text ) );
+   df.pixel.setValue( 7.52 ); df.pixel.onValueUpdated( 7.52 );
+   eq( "FITS: a typed pixel size overrides the keywords", df.scaleOrigin, "" );
+   near( "... and recomputes the scale", df.scale.value, F.x.imageScaleArcsec( 400, 7.52 ), 1e-9 );
 
    var N = runScript( { cancel: true, noActiveWindow: true } );
    eq( "no open image: nothing preselected", N.dialogs[0].viewList.currentView, null );
@@ -656,7 +683,7 @@ out( "== dialog settings ==" );
                          R.store[ KEY + "amount" ], R.store[ KEY + "satThreshold" ], R.store[ KEY + "protect" ],
                          R.store[ KEY + "inPlace" ], R.store[ KEY + "mode" ], R.store[ KEY + "band" ] ],
        [ 279, 620, 4.63, 0.7, 0.8, false, true, 1, 6 ] );
-   eq( "telescope saved by label", R.store[ KEY + "telescope" ], d.telescopeCombo.items[ iRasa ] );
+   eq( "telescope saved by maker + model", R.store[ KEY + "telescope" ], "Celestron RASA 11" );
 
    var d2 = new X.ObstructionCorrectionDialog();            // same fake store
    eq( "a new dialog restores them",
@@ -667,7 +694,7 @@ out( "== dialog settings ==" );
 
    d.telescopeCombo.currentItem = 0;
    d.saveSettings();
-   eq( "Custom is saved as an empty label", R.store[ KEY + "telescope" ], "" );
+   eq( "Custom is saved as an empty key", R.store[ KEY + "telescope" ], "" );
 
    R.store[ KEY + "telescope" ] = "A telescope that was removed from the table";
    R.store[ KEY + "band" ] = 99; R.store[ KEY + "mode" ] = 7;

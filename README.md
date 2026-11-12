@@ -8,9 +8,10 @@ linear image with the ratio of the clear-aperture and obstructed-aperture diffra
 H(f) = MTF_clear(f) / MTF_obstructed(f, d/D)
 ```
 
-Status: **v0.1, not yet run inside PixInsight.** The math is tested; the dialog and the
-processing calls have only been run against a stand-in for PixInsight. Design and roadmap:
-[PLAN.md](PLAN.md).
+Status: **v0.1, first runs inside PixInsight passed** on an RGB RASA 8 stack (new-image
+mode, FITS-derived scale); the measured noise gain matches the designed filter. In-place
+mode with a mask, mono and plate-solved images are not yet tried in PixInsight. Design and
+roadmap: [PLAN.md](PLAN.md).
 
 Requires PixInsight 1.9.4 or newer (V8 JavaScript engine).
 

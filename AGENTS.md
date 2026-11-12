@@ -18,11 +18,19 @@ Full design, numbers, milestones and open questions: [PLAN.md](PLAN.md). Follow 
 - 2026-11-12: v0.1 written — full portable math (MTFs, bands, kernel builder, FFT), dialog
   with the telescope drop-down, processing pipeline (PixelMath channel extraction →
   `Convolution` in Image mode → PixelMath write-back, saturated-star protection).
-- **Never run inside PixInsight yet.** `tools/test.sh` passes, but that is math plus a
-  fake-PixInsight smoke run. The first real run by the owner is the next step; expect
-  API-name fixes. Unverified calls: negative-valued kernel view accepted by `Convolution`,
-  PixelMath `createNewImage` properties and enum names, `Settings` round trip,
-  `ComboBox` / `NumericControl` event names, `image.median()`.
+- 2026-11-12: **first run inside PixInsight** (Windows, owner's RASA 8 RGB stack, 6226×4139,
+  FITS FOCALLEN 400 / XPIXSZ 3.76, no plate solution). Verified there:
+  - Process enums live on the **constructor** under V8 (`PixelMath.Gray` = 2, `.SameAsTarget` = 0,
+    `.f32` = 4; `Convolution.Parametric` = 0, `.Image` = 2). `X.prototype.Enum` is `undefined`.
+  - `Convolution` in Image mode applies a kernel with negative values as-is (no clipping or
+    renormalising); hidden windows, `createNewImage`, `truncate*`, `forceClose` all work.
+  - End to end on synthetic white noise: measured noise gain R/G/B ×1.211 / ×1.162 / ×1.133
+    vs kernel prediction ×1.211 / ×1.163 / ×1.134; means preserved.
+  - `Settings` stores strings **8-bit** (an em dash came back as U+0014): keep stored strings ASCII.
+  - Setting `NumericControl.setValue` / `ComboBox.currentItem` from code fires no events.
+  - `image.median()`, view keywords, `ViewList`, Cancel path work.
+- Still not run inside PixInsight: in-place mode with a mask, mono images, plate-solved images,
+  *True equivalent* mode, install via Feature Scripts, a visual check of the result.
 - Not built yet (PLAN.md milestones 6–7): noise-aware weighting, MTF plot, in-PixInsight
   synthetic test script, update-repository manifest.
 
@@ -79,7 +87,9 @@ Conventions follow https://github.com/awitwicki/PI-Scripts; its CLAUDE.md explai
 - `jsc`'s `quit()` ignores its exit code; the test files throw to signal failure. Keep that.
 - GUI, process calls and image I/O can only be tested **inside PixInsight**, by the owner.
   Never report those as working from the self-test alone; say what was and was not run.
-- The machine this was scaffolded on has no PixInsight and no Node (jsc is used).
+- The machine this was scaffolded on has no PixInsight and no Node (jsc is used). The owner's
+  Windows PC has PixInsight and Node; on Windows set `git config core.autocrlf false` in the
+  clone, or CRLF checkouts fail the `#engine v8` first-line test.
 
 ## Conventions
 

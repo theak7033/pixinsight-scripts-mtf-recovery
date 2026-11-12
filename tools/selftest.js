@@ -65,7 +65,7 @@ out( "== math block extracted (" + block.length + " chars) ==" );
 var M = ( new Function( block +
    "\nreturn { lensArea: lensArea, mtfAnnular: mtfAnnular, mtfClear: mtfClear,"
    + " obstructionGain: obstructionGain, OPTICS: OPTICS,"
-   + " opticsObstructionRatio: opticsObstructionRatio, opticsLabel: opticsLabel,"
+   + " opticsObstructionRatio: opticsObstructionRatio, opticsLabel: opticsLabel, opticsKey: opticsKey,"
    + " obstructedOptics: obstructedOptics, BANDS: BANDS, bandById: bandById,"
    + " imageScaleArcsec: imageScaleArcsec, cutoffCyclesPerPixel: cutoffCyclesPerPixel,"
    + " bandCutoffs: bandCutoffs, gainAt: gainAt, shapedGain: shapedGain,"
@@ -140,6 +140,8 @@ var listed = M.obstructedOptics( fixture );
 check( "only obstructed optics are listed", listed.length, 2 );
 check( "list is sorted by label", listed[0].model, "Astrograph 130" );
 check( "label text", M.opticsLabel( fixture[1] ), "Test Newton 200 — 200 mm f/4.0, 35%" );
+check( "settings key is maker + model", M.opticsKey( fixture[1] ), "Test Newton 200" );
+check( "settings key without a maker", M.opticsKey( { model: " Solo 100 " } ), "Solo 100" );
 
 out( "== shipped optics table ==" );
 out( "  INFO  " + M.OPTICS.length + " record(s), "
@@ -153,6 +155,10 @@ check( "12 obstructed optics from the owner's sheet", M.obstructedOptics( M.OPTI
 M.obstructedOptics( M.OPTICS ).forEach( function( o ) { out( "        " + M.opticsLabel( o ) ); } );
 var labels = M.OPTICS.map( M.opticsLabel );
 check( "no duplicate labels", labels.filter( function( l, i ) { return labels.indexOf( l ) !== i; } ).length, 0 );
+var keys = M.OPTICS.map( M.opticsKey );
+check( "no duplicate settings keys", keys.filter( function( k, i ) { return keys.indexOf( k ) !== i; } ).length, 0 );
+// PixInsight's Settings store strings as 8-bit (verified in 1.9.4: an em dash came back as U+0014).
+check( "settings keys are plain ASCII", keys.filter( function( k ) { return /[^\x20-\x7E]/.test( k ); } ).length, 0 );
 
 out( "== scale / cutoff ==" );
 check( "scale 3.76um @ 406mm", M.imageScaleArcsec( 406, 3.76 ), 1.910, 0.002 );
