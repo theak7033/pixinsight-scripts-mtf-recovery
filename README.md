@@ -68,5 +68,5 @@ half a percentage point; overwrite the field if you know your exact secondary si
 tools/test.sh
 ```
 
-Runs the math self-test, a syntax check and a smoke run of the whole script against a
-stand-in for PixInsight, with Node.js if installed or the `jsc` shell that ships with macOS. See [AGENTS.md](AGENTS.md) for conventions.
+Runs the math self-test, a syntax check, and unit tests of the dialog and processing code
+against a stand-in for PixInsight (every function must be exercised), with Node.js if installed or the `jsc` shell that ships with macOS. See [AGENTS.md](AGENTS.md) for conventions.
