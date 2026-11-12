@@ -122,6 +122,13 @@ function opticsLabel( o ) {
    return s;
 }
 
+// Key a telescope is remembered by in Settings, e.g. "Celestron RASA 8".
+// Plain ASCII on purpose: PixInsight's Settings store strings as 8-bit, so
+// the label's em dash comes back as U+0014 and would never match again.
+function opticsKey( o ) {
+   return ( ( o.maker ? o.maker + " " : "" ) + o.model ).trim();
+}
+
 // The records that have a central obstruction, sorted by label.
 function obstructedOptics( list ) {
    return list
@@ -447,7 +454,10 @@ var ObstructionCorrectionDialog = class extends Dialog {
 
       this.windowTitle = "ObstructionCorrection v" + VERSION;
       this.optics = obstructedOptics( OPTICS );
-      this.scaleLocked = false;          // true while the scale comes from a plate solution
+      // Where the image scale came from: "solution" (plate solution), "fits"
+      // (FOCALLEN / XPIXSZ keywords) or "" (focal length and pixel size fields).
+      // The image's own metadata outranks a focal length picked from the list.
+      this.scaleOrigin = "";
 
       let labelWidth = this.font.width( "Saturation threshold:" ) + 8;
 
@@ -511,14 +521,14 @@ var ObstructionCorrectionDialog = class extends Dialog {
          function() { self.markCustom(); self.updateReadout(); } );
       this.focal = makeNumeric( "Focal length (mm):", 50, 6000, 0, DEFAULT_FOCAL_MM,
          "Effective focal length, including any reducer or Barlow. Only used to derive the image scale.",
-         function() { self.markCustom(); self.scaleFromOptics(); self.updateReadout(); } );
+         function() { self.markCustom(); self.opticsEdited(); self.updateReadout(); } );
       this.pixel = makeNumeric( "Pixel size (um):", 1, 30, 2, DEFAULT_PIXEL_UM,
          "Pixel size of the image as it is now, i.e. after binning. Only used to derive the image scale.",
-         function() { self.scaleFromOptics(); self.updateReadout(); } );
+         function() { self.opticsEdited(); self.updateReadout(); } );
       this.scale = makeNumeric( "Image scale (\"/px):", 0.02, 30, 3, imageScaleArcsec( DEFAULT_FOCAL_MM, DEFAULT_PIXEL_UM ),
          "Arcseconds per pixel of this image. Taken from the plate solution when there is one " +
          "(correct for drizzled or resampled data); otherwise from focal length and pixel size. Editable.",
-         function() { self.scaleLocked = false; self.scaleSource.text = "Image scale: entered manually"; self.updateReadout(); } );
+         function() { self.scaleOrigin = ""; self.scaleSource.text = "Image scale: entered manually"; self.updateReadout(); } );
       this.scaleSource = new Label( this );
       this.scaleSource.text = "";
 
@@ -619,14 +629,15 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.setMinWidth( 520 );
    }
 
-   // Telescope picked from the list: fill the optics fields.
+   // Telescope picked from the list: fill the optics fields. The catalogue
+   // focal length is used only when the image carries no scale of its own.
    applyTelescope( index ) {
       if ( index <= 0 || index > this.optics.length )
          return;
       let o = this.optics[ index - 1 ];
       this.aperture.setValue( o.apertureMm );
       this.obstruction.setValue( 100 * opticsObstructionRatio( o ) );
-      if ( o.focalMm > 0 )
+      if ( o.focalMm > 0 && !this.scaleOrigin )
          this.focal.setValue( o.focalMm );
       this.scaleFromOptics();
       this.updateReadout();
@@ -637,10 +648,18 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.telescopeCombo.currentItem = 0;
    }
 
-   // Derive the scale from focal length + pixel size, unless a plate
-   // solution already provides it.
+   // The user typed a focal length or pixel size: that overrides the FITS
+   // keywords, but never a plate solution.
+   opticsEdited() {
+      if ( this.scaleOrigin === "fits" )
+         this.scaleOrigin = "";
+      this.scaleFromOptics();
+   }
+
+   // Derive the scale from focal length + pixel size, unless the image's
+   // own metadata already provides it.
    scaleFromOptics() {
-      if ( this.scaleLocked )
+      if ( this.scaleOrigin )
          return;
       this.scale.setValue( imageScaleArcsec( this.focal.value, this.pixel.value ) );
       this.scaleSource.text = "Image scale: from focal length and pixel size";
@@ -650,13 +669,15 @@ var ObstructionCorrectionDialog = class extends Dialog {
    detectScale() {
       let view = this.viewList.currentView;
       let r = detectImageScale( view );
-      this.scaleLocked = false;
+      this.scaleOrigin = "";
+      if ( r.focalMm )
+         this.focal.setValue( r.focalMm );
       if ( r.pixelUm )
          this.pixel.setValue( r.pixelUm );
       if ( r.scale ) {
          this.scale.setValue( r.scale );
          this.scaleSource.text = "Image scale: from " + r.source;
-         this.scaleLocked = ( r.source === "astrometric solution" );
+         this.scaleOrigin = ( r.source === "astrometric solution" ) ? "solution" : "fits";
       } else
          this.scaleFromOptics();
    }
@@ -726,11 +747,11 @@ var ObstructionCorrectionDialog = class extends Dialog {
       this.modeCombo.currentItem = ( mode === 1 ) ? 1 : 0;
       let band = readSetting( "band", DataType_Int32, 0 );
       this.bandCombo.currentItem = ( band >= 0 && band <= BANDS.length ) ? band : 0;
-      // The telescope is remembered by its label, so a re-sorted or extended list still matches.
-      let label = readSetting( "telescope", DataType_String, "" );
+      // The telescope is remembered by maker + model, so a re-sorted or extended list still matches.
+      let key = readSetting( "telescope", DataType_String, "" );
       let index = 0;
       for ( let i = 0; i < this.optics.length; ++i )
-         if ( opticsLabel( this.optics[i] ) === label )
+         if ( opticsKey( this.optics[i] ) === key )
             index = i + 1;
       this.telescopeCombo.currentItem = index;
    }
@@ -748,7 +769,7 @@ var ObstructionCorrectionDialog = class extends Dialog {
       writeSetting( "band", DataType_Int32, this.bandCombo.currentItem );
       writeSetting( "telescope", DataType_String,
          this.telescopeCombo.currentItem > 0
-            ? opticsLabel( this.optics[ this.telescopeCombo.currentItem - 1 ] ) : "" );
+            ? opticsKey( this.optics[ this.telescopeCombo.currentItem - 1 ] ) : "" );
    }
 };
 
@@ -783,8 +804,8 @@ function pixelMathToNewGray( view, expression, baseId ) {
    P.createNewImage = true;
    P.showNewImage = false;
    P.newImageId = id;
-   P.newImageColorSpace = PixelMath.prototype.Gray;
-   P.newImageSampleFormat = PixelMath.prototype.f32;
+   P.newImageColorSpace = PixelMath.Gray;
+   P.newImageSampleFormat = PixelMath.f32;
    if ( !P.executeOn( view ) )
       throw new Error( "PixelMath failed for: " + expression );
    let win = ImageWindow.windowById( id );
@@ -795,7 +816,7 @@ function pixelMathToNewGray( view, expression, baseId ) {
 
 function convolveWithKernel( view, kernelView ) {
    let P = new Convolution;
-   P.mode = Convolution.prototype.Image;
+   P.mode = Convolution.Image;
    P.viewId = kernelView.id;
    if ( !P.executeOn( view ) )
       throw new Error( "Convolution failed on " + view.id );
@@ -803,7 +824,7 @@ function convolveWithKernel( view, kernelView ) {
 
 function gaussianBlur( view, sigma ) {
    let P = new Convolution;
-   P.mode = Convolution.prototype.Parametric;
+   P.mode = Convolution.Parametric;
    P.sigma = sigma;
    trySet( P, "shape", 2.0 );          // 2 = Gaussian
    trySet( P, "aspectRatio", 1.0 );
@@ -903,8 +924,8 @@ function applyCorrection( p ) {
          P.createNewImage = true;
          P.showNewImage = true;
          P.newImageId = resultId;
-         P.newImageColorSpace = PixelMath.prototype.SameAsTarget;
-         P.newImageSampleFormat = PixelMath.prototype.f32;
+         P.newImageColorSpace = PixelMath.SameAsTarget;
+         P.newImageSampleFormat = PixelMath.f32;
          if ( !P.executeOn( view ) )
             throw new Error( "PixelMath failed while writing the result" );
       }
